@@ -1,0 +1,6 @@
+#!/bin/bash
+DIR=$(cd "$(dirname "$0")"; pwd)
+
+sudo systemctl stop clash-config-merger.service
+sudo systemctl disable clash-config-merger.service
+sudo rm /lib/systemd/system/clash-config-merger.service

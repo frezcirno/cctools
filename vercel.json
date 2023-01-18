@@ -1,0 +1,27 @@
+{
+    "version": 2,
+    "builds": [
+        {
+            "src": "*.html",
+            "use": "@vercel/static"
+        },
+        {
+            "src": "*.yaml",
+            "use": "@vercel/static"
+        },
+        {
+            "src": "index.py",
+            "use": "@vercel/python"
+        }
+    ],
+    "routes": [
+        {
+            "src": "/clash/config.yaml",
+            "dest": "index.py"
+        },
+        {
+            "src": "/clash/forward",
+            "dest": "index.py"
+        }
+    ]
+}

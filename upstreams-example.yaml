@@ -1,0 +1,9 @@
+Vender1:
+  enabled: false
+  urls:
+    - https://url/to/vender1?with=parameters1
+    - https://url/to/vender1?with=parameters2
+Vender2:
+  enabled: true
+  urls:
+    - https://url/to/vender2?with=parameters

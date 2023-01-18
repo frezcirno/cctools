@@ -1,0 +1,12 @@
+#!/bin/bash
+DIR=$(cd "$(dirname "$0")"; pwd)
+
+# install python3-venv
+sudo apt-get install -y python3-venv
+
+# create venv
+python3 -m venv ${DIR}/venv
+source ${DIR}/venv/bin/activate
+pip install -r ${DIR}/requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+python ./index.py

@@ -1,0 +1,6 @@
+pyyaml
+requests
+flask
+gevent
+pydantic
+pytest
