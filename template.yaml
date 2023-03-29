@@ -121,6 +121,7 @@ dns:
     - 223.5.5.5 # Ali DNS +Anycast +ECS
     - 119.29.29.29 # Tencent DNS +Anycast +ECS
     # - 180.76.76.76 # Baidu DNS
+    # - 4.2.2.2 # Level3 DNS
     # - https://dns.rubyfish.cn/dns-query
 
   # When `fallback` is present, the DNS server will send concurrent requests
@@ -300,12 +301,14 @@ rule-providers:
 script:
   shortcuts:
     github_ssh: host == 'github.com' and dst_port == 22
+    udp: network == 'udp'
 
 rules:
   # custom
   - DOMAIN-SUFFIX,bing.com,BING
   - DOMAIN-SUFFIX,openai.com,OPENAI
   - SCRIPT,github_ssh,GITHUB
+  - SCRIPT,udp,PROXY-UDP
   - PROCESS-NAME,git-remote-http,GITHUB
   - PROCESS-NAME,git-remote-http.exe,GITHUB
   - PROCESS-NAME,git-remote-https,GITHUB

@@ -25,7 +25,8 @@ DEFAULT_CONTROLLER_PORT = 9090
 with open("./template.yaml") as f:
     TEMPLATE = yaml.safe_load(f)
 
-PRESET_CHAINS = ["PROXY"] + list({rule.split(",")[2] for rule in TEMPLATE["rules"] if rule.count(",") > 1} - {"DIRECT", "REJECT", "PROXY"})
+PRESET_CHAINS = ["PROXY", "PROXY-UDP"] + list({rule.split(",")[2] for rule in TEMPLATE["rules"]
+                                              if rule.count(",") > 1} - {"DIRECT", "REJECT", "PROXY", "PROXY-UDP"})
 
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36"
 
@@ -228,17 +229,17 @@ def generate(config: Config) -> Dict:
         if all_proxies_oversea["proxies"]:
             proxy_groups.append(all_proxies_oversea)
 
-    # if 'udp' in config.custom_groups:
-    #     all_proxies_udp = {
-    #         "name": "all-udp",
-    #         "type": "url-test",
-    #         "proxies": [proxy["name"] for proxy in instance["proxies"] if proxy.get("udp", False)],
-    #         "url": "http://www.gstatic.com/generate_204",
-    #         "interval": 300,
-    #         "tolerance": 100,
-    #     }
-    #     if all_proxies_udp["proxies"]:
-    #         proxy_groups.append(all_proxies_udp)
+    if 'udp' in config.custom_groups:
+        all_proxies_udp = {
+            "name": "all-udp",
+            "type": "url-test",
+            "proxies": [proxy["name"] for proxy in instance["proxies"] if proxy.get("udp", False)],
+            "url": "http://www.gstatic.com/generate_204",
+            "interval": 300,
+            "tolerance": 100,
+        }
+        if all_proxies_udp["proxies"]:
+            proxy_groups.append(all_proxies_udp)
 
     # if 'udp-oversea' in config.custom_groups:
     #     all_proxies_udp_oversea = {
@@ -288,17 +289,17 @@ def generate(config: Config) -> Dict:
             if upstream_all_proxies_oversea["proxies"]:
                 proxy_groups.append(upstream_all_proxies_oversea)
 
-        # if 'udp' in config.custom_groups:
-        #     upstream_all_proxies_udp = {
-        #         "name": key + "-udp",
-        #         "type": "url-test",
-        #         "proxies": [proxy["name"] for proxy in proxies if proxy.get("udp", False)],
-        #         "url": "http://www.gstatic.com/generate_204",
-        #         "interval": 300,
-        #         "tolerance": 100,
-        #     }
-        #     if upstream_all_proxies_udp["proxies"]:
-        #         proxy_groups.append(upstream_all_proxies_udp)
+        if 'udp' in config.custom_groups:
+            upstream_all_proxies_udp = {
+                "name": key + "-udp",
+                "type": "url-test",
+                "proxies": [proxy["name"] for proxy in proxies if proxy.get("udp", False)],
+                "url": "http://www.gstatic.com/generate_204",
+                "interval": 300,
+                "tolerance": 100,
+            }
+            if upstream_all_proxies_udp["proxies"]:
+                proxy_groups.append(upstream_all_proxies_udp)
 
         # if 'udp-oversea' in config.custom_groups:
         #     upstream_all_proxies_udp_oversea = {
@@ -331,7 +332,7 @@ def generate(config: Config) -> Dict:
         chain = {
             "name": custom_chain,
             "type": "select",
-            "proxies": (["PROXY"] if custom_chain != "PROXY" else []) + [pg["name"] for pg in proxy_groups]
+            "proxies": (["PROXY"] if custom_chain != "PROXY" else []) + ["DIRECT"] + [pg["name"] for pg in proxy_groups]
         }
         if "direct" in config.custom_groups:
             chain["proxies"].append("DIRECT")
