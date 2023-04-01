@@ -74,10 +74,10 @@ class Config:
         self.upstreams = {k.strip(): v.strip() for k, v in self.upstreams.items()}
 
 
-def retrieve(url: str, ttl=3600) -> Dict:
+def retrieve(url: str, ttl=3600, mutator=None) -> Dict:
     print(f"Retrieving {url}", flush=True)
 
-    save_path = "./cache/" + sha1(url.encode()).hexdigest() + ".yaml"
+    save_path = "./cache/" + sha1(url.encode()).hexdigest()
 
     if os.path.exists(save_path):
         now = time.time()
@@ -93,11 +93,15 @@ def retrieve(url: str, ttl=3600) -> Dict:
     if not resp.ok:
         raise Exception("Failed to retrieve upstream")
 
+    content = resp.content
+    if mutator:
+        content = mutator(content)
+
     os.makedirs("./cache", exist_ok=True)
     with open(save_path, "wb") as f:
-        f.write(resp.content)
+        f.write(content)
 
-    return resp.content
+    return content
 
 
 def retrieve_upstream(upstream: str, ttl=3600) -> Dict:
@@ -343,6 +347,21 @@ def generate(config: Config) -> Dict:
     return instance
 
 
+def convert_raw_list_to_rule_provider(raw_list: bytes) -> bytes:
+    rules = []
+    for l in raw_list.splitlines():
+        l = l.strip()
+        if not l or l.startswith(b"#"):
+            rules.append(l)
+        else:
+            rules.append(b"  - " + l)
+    for i in range(len(rules)):
+        if rules[i].startswith(b'  - '):
+            rules.insert(i, b"payload:")
+            break
+    return b"\n".join(rules) + b"\n"
+
+
 if __name__ == "__main__":
     import sys
     print("Python version:", sys.version)
@@ -376,6 +395,8 @@ if __name__ == "__main__":
         if key not in TEMPLATE["rule-providers"]:
             return "Not found", 404
         url = TEMPLATE["rule-providers"][key]["url"]
+        if url.startswith("raw://"):
+            return retrieve(url[6:], 86400, convert_raw_list_to_rule_provider)
         return retrieve(url, 86400)
 
     from gevent.pywsgi import WSGIServer

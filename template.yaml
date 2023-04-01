@@ -298,21 +298,43 @@ rule-providers:
     path: ./ruleset/applications.yaml
     interval: 86400
 
+  zju_internal:
+    type: http
+    behavior: classical
+    url: "raw://https://raw.githubusercontent.com/ZJU-Rule/ZJU-Rule/master/Clash/ZJU.list"
+    path: ./ruleset/ZJU-Rule_ZJU.yaml
+    interval: 86400
+
+  scholar:
+    type: http
+    behavior: classical
+    url: "raw://https://raw.githubusercontent.com/ZJU-Rule/ZJU-Rule/master/Clash/ZJU-More-Scholar.list"
+    path: ./ruleset/ZJU-Rule_ZJU-More-Scholar.yaml
+    interval: 86400
+
+  chatbot:
+    type: http
+    behavior: classical
+    url: "raw://https://raw.githubusercontent.com/ZJU-Rule/ZJU-Rule/master/Clash/Ruleset/ChatBot.list"
+    path: ./ruleset/ZJU-Rule_ChatBot.yaml
+    interval: 86400
+
 script:
   shortcuts:
-    github_ssh: host == 'github.com' and dst_port == 22
+    git_ssh: dst_port == 22 and (host == 'github.com' or host == 'gitlab.com')
     udp: network == 'udp'
 
 rules:
   # custom
-  - DOMAIN-SUFFIX,bing.com,BING
-  - DOMAIN-SUFFIX,openai.com,OPENAI
-  - SCRIPT,github_ssh,GITHUB
   - SCRIPT,udp,PROXY-UDP
-  - PROCESS-NAME,git-remote-http,GITHUB
-  - PROCESS-NAME,git-remote-http.exe,GITHUB
-  - PROCESS-NAME,git-remote-https,GITHUB
-  - PROCESS-NAME,git-remote-https.exe,GITHUB
+  - RULE-SET,zju_internal,DIRECT
+  - RULE-SET,scholar,PROXY
+  - RULE-SET,chatbot,CHATBOT
+  - SCRIPT,git_ssh,GIT
+  - PROCESS-NAME,git-remote-http,GIT
+  - PROCESS-NAME,git-remote-http.exe,GIT
+  - PROCESS-NAME,git-remote-https,GIT
+  - PROCESS-NAME,git-remote-https.exe,GIT
   - DOMAIN-KEYWORD,ipfs,IPFS
   # allowed safe trackers
   - DOMAIN,hd.mmstat.com,DIRECT
@@ -331,36 +353,13 @@ rules:
   - DOMAIN-SUFFIX,googletagmanager.com,DIRECT
   - DOMAIN-SUFFIX,googletagservices.com,DIRECT
   # ad
-  - DOMAIN-KEYWORD,admarvel,REJECT
-  - DOMAIN-KEYWORD,admaster,REJECT
-  - DOMAIN-KEYWORD,adsage,REJECT
-  - DOMAIN-KEYWORD,adsmogo,REJECT
-  - DOMAIN-KEYWORD,adsrvmedia,REJECT
-  - DOMAIN-KEYWORD,adwords,REJECT
-  - DOMAIN-KEYWORD,adservice,REJECT
-  - DOMAIN-KEYWORD,domob,REJECT
-  - DOMAIN-KEYWORD,duomeng,REJECT
-  - DOMAIN-KEYWORD,dwtrack,REJECT
-  - DOMAIN-KEYWORD,guanggao,REJECT
-  - DOMAIN-KEYWORD,lianmeng,REJECT
-  - DOMAIN-SUFFIX,mmstat.com,REJECT
-  - DOMAIN-KEYWORD,omgmta,REJECT
-  - DOMAIN-KEYWORD,openx,REJECT
-  - DOMAIN-KEYWORD,partnerad,REJECT
-  - DOMAIN-KEYWORD,pingfore,REJECT
-  - DOMAIN-KEYWORD,supersonicads,REJECT
-  - DOMAIN-KEYWORD,uedas,REJECT
-  - DOMAIN-KEYWORD,umeng,REJECT
-  - DOMAIN-KEYWORD,usage,REJECT
-  - DOMAIN-KEYWORD,wlmonitor,REJECT
-  - DOMAIN-KEYWORD,zjtoolbar,REJECT
   - RULE-SET,reject,REJECT
   # domestic
   - RULE-SET,applications,DIRECT
   - RULE-SET,apple,DIRECT
   - RULE-SET,private,DIRECT
-  - DOMAIN,dl.google.com,PROXY  # Patch for direct list
-  - DOMAIN,dl.l.google.com,PROXY  # Patch for direct list
+  - DOMAIN,dl.google.com,PROXY # Patch for direct list
+  - DOMAIN,dl.l.google.com,PROXY # Patch for direct list
   - RULE-SET,direct,DIRECT
   - RULE-SET,lancidr,DIRECT
   - RULE-SET,cncidr,DIRECT
