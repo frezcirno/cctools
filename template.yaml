@@ -74,15 +74,16 @@ hosts:
   # '*.clash.dev': 127.0.0.1
   # '.dev': 127.0.0.1
   # 'alpha.clash.dev': '::1'
-  "www.msftconnecttest.com": "23.32.236.90"
-  # 'www.msftconnecttest.com': '23.202.34.233'
+  "dns.msftncsi.com": "131.107.255.255" # Microsoft NCSI in China
+  # "www.msftconnecttest.com": "23.33.32.40" # Microsoft Connect Test in China (added in rules)
 
 profile:
   # Store the `select` results in $HOME/.config/clash/.cache
   # set false If you don't want this behavior
   # when two different configurations have groups with the same name, the selected values are shared
   # store-selected: false
-
+  # open tracing exporter API
+  # tracing: true
   # persistence fakeip
   # store-fake-ip: true
 
@@ -184,9 +185,7 @@ tun:
   enable: false
   stack: system # or gvisor
   dns-hijack:
-    - 8.8.8.8:53
-    - 8.8.4.4:53
-    - 1.0.0.1:53
+    - any:53
   # Use Linux kernel nftables feature on pure Go. It can be replaced with redir-port (TCP) without any network config.
   auto-redir: true
   auto-route: true # auto set global route
@@ -321,14 +320,15 @@ rule-providers:
 
 script:
   shortcuts:
-    git_ssh: dst_port == 22 and (host == 'github.com' or host == 'gitlab.com')
+    git_ssh: (host == 'github.com' or host == 'gitlab.com') and dst_port == 22
+    openai_udp: host == 'openai.com' and network == 'udp'
     udp: network == 'udp'
 
 rules:
   # custom
-  - SCRIPT,udp,PROXY-UDP
   - RULE-SET,zju_internal,DIRECT
   - RULE-SET,scholar,PROXY
+  - SCRIPT,openai_udp,CHATBOT
   - RULE-SET,chatbot,CHATBOT
   - SCRIPT,git_ssh,GIT
   - PROCESS-NAME,git-remote-http,GIT
@@ -357,6 +357,7 @@ rules:
   # domestic
   - RULE-SET,applications,DIRECT
   - RULE-SET,apple,DIRECT
+  - DOMAIN-SUFFIX,msftconnecttest.com,PROXY # Patch for direct list
   - RULE-SET,private,DIRECT
   - DOMAIN,dl.google.com,PROXY # Patch for direct list
   - DOMAIN,dl.l.google.com,PROXY # Patch for direct list
@@ -476,4 +477,5 @@ rules:
   - RULE-SET,telegramcidr,PROXY
   - RULE-SET,proxy,PROXY
   # default
+  - SCRIPT,udp,PROXY-UDP
   - MATCH,PROXY

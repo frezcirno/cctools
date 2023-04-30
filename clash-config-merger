@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import copy
+import logging
 import os
 import re
 import string
@@ -7,13 +8,21 @@ import time
 import traceback
 from enum import Enum
 from hashlib import sha1
+from multiprocessing.pool import ThreadPool
 from random import choices
-from typing import Dict, List, Optional
+from typing import Dict, Iterable, List, Optional
 
 import requests
 import yaml
 from pydantic import Field
 from pydantic.dataclasses import dataclass
+
+logging.basicConfig(
+    level=logging.INFO,
+    filename="clash-config-merger.log",
+    format="%(asctime)s.%(msecs)d %(levelname)s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 DEFAULT_HTTP_PORT = 7890
 DEFAULT_SOCKS_PORT = 7891
@@ -31,10 +40,48 @@ PRESET_CHAINS = ["PROXY", "PROXY-UDP"] + list({rule.split(",")[2] for rule in TE
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36"
 
 
+class DictList(list):
+    """
+    A list that can be accessed by key
+    """
+    def __getitem__(self, item):
+        if isinstance(item, str):
+            for i in self:
+                if i["name"] == item:
+                    return i
+            raise KeyError(item)
+        return super().__getitem__(item)
+
+    def __setitem__(self, key, value):
+        if isinstance(key, str):
+            for i in self:
+                if i["name"] == key:
+                    i.update(value)
+            else:
+                self.append(value)
+        else:
+            return super().__setitem__(key, value)
+
+    def __add__(self, other):
+        return DictList(super().__add__(other))
+
+    def __contains__(self, __key: object) -> bool:
+        return super().__contains__(__key) or any(i["name"] == __key for i in self)
+
+    def keys(self):
+        return [i["name"] for i in self]
+
 class Mode(str, Enum):
     PROXY = "proxy"
     TUN = "tun"
     REDIR = "redir"
+
+
+@dataclass
+class Upstream:
+    urls: list[str] = Field(default_factory=list)
+    ttl: int = 3600
+    enabled: bool = True
 
 
 @dataclass
@@ -60,22 +107,24 @@ class Config:
     keep_upstream_chains: bool = False
     custom_groups: List[str] = Field(default_factory=list)
 
-    upstreams: Dict[str, str] = Field(default_factory=dict)
+    upstreams: Dict[str, Upstream] = Field(default_factory=dict)
     custom_chains: List[str] = Field(default_factory=list)
+
+    secret_upstreams: List[str] = Field(default_factory=list)
 
     def __post_init__(self):
         if isinstance(self.custom_groups, str):
             self.custom_groups = self.custom_groups.split(",") if self.custom_groups else []
+        if isinstance(self.secret_upstreams, str):
+            self.secret_upstreams = self.secret_upstreams.split(",") if self.secret_upstreams else []
 
     def __post_init_post_parse__(self):
         if self.http_port is not None:
             self.port = self.http_port
 
-        self.upstreams = {k.strip(): v.strip() for k, v in self.upstreams.items()}
 
-
-def retrieve(url: str, ttl=3600, mutator=None) -> Dict:
-    print(f"Retrieving {url}", flush=True)
+def retrieve(url: str, ttl=3600, mutator=None, timeout=None) -> bytes:
+    logging.info(f"Retrieving {url}")
 
     save_path = "./cache/" + sha1(url.encode()).hexdigest()
 
@@ -84,12 +133,12 @@ def retrieve(url: str, ttl=3600, mutator=None) -> Dict:
         ctime = os.path.getmtime(save_path)
         if ctime > now:
             # clock changed
-            print("Clock changed, ignoring cache", flush=True)
+            logging.warn("Clock changed, ignoring cache")
         elif now - ctime < ttl:
             with open(save_path, "rb") as f:
                 return f.read()
 
-    resp = requests.get(url, headers={"User-Agent": USER_AGENT})
+    resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=timeout)
     if not resp.ok:
         raise Exception("Failed to retrieve upstream")
 
@@ -104,10 +153,88 @@ def retrieve(url: str, ttl=3600, mutator=None) -> Dict:
     return content
 
 
-def retrieve_upstream(upstream: str, ttl=3600) -> Dict:
-    content = retrieve(upstream, ttl)
+@dataclass
+class UpstreamData:
+    proxies: DictList
+    groups: DictList
+
+    def remove_indicator(self):
+        blacklist = ["DIRECT", "REJECT", "GLOBAL", "✉️", "有效期", "群", "感谢", "非线路"]
+
+        self.proxies = DictList(proxy for proxy in self.proxies if all(b not in proxy["name"] for b in blacklist))
+        for group in self.groups:
+            group["proxies"] = [proxy_name for proxy_name in group["proxies"]
+                                if all(b not in proxy_name for b in blacklist)]
+        self.groups = DictList(group for group in self.groups if group["proxies"])
+
+
+def retrieve_upstream(upstream: str, ttl=3600, timeout=None) -> UpstreamData:
+    content = retrieve(upstream, ttl, timeout=timeout)
     obj = yaml.safe_load(content)
-    return obj["proxies"], obj["proxy-groups"]
+
+    proxies = obj["proxies"]
+    groups = obj["proxy-groups"]
+
+    ud = UpstreamData(proxies, groups)
+    ud.remove_indicator()
+
+    return ud
+
+
+def stack_upstreams(upstreams: Iterable[UpstreamData]) -> UpstreamData:
+    stacked_proxies = DictList()
+    stacked_groups = DictList()
+
+    for upstream in upstreams:
+        for proxy in upstream.proxies:
+            if (proxy_name := proxy['name']) in stacked_proxies:
+                # rename
+                cnt = 1
+                while (new_name := proxy["name"] + '+dup' + str(cnt)) in stacked_proxies:
+                    cnt += 1
+                proxy["name"] = new_name
+                for group in upstream.groups:
+                    group["proxies"] = [new_name if cp == proxy_name else cp for cp in group["proxies"]]
+            stacked_proxies.append(proxy)
+
+        for group in upstream.groups:
+            if (group_name := group["name"]) in stacked_groups:
+                stacked_groups[group_name]["proxies"] += group["proxies"]
+            else:
+                stacked_groups[group_name] = group
+
+    return UpstreamData(stacked_proxies, stacked_groups)
+
+
+def rename_upstreams(upstreams: dict[str, UpstreamData]) -> dict[str, UpstreamData]:
+
+    # check proxy name conflict
+    all_proxy_names = set()
+    for upstream_name, upstream in upstreams.items():
+        for proxy in upstream.proxies:
+            if (proxy_name := proxy['name']) in all_proxy_names:
+                # rename
+                cnt = 1
+                while (new_name := proxy["name"] + '+' + upstream_name) in all_proxy_names:
+                    cnt += 1
+                proxy["name"] = new_name
+                for group in upstream.groups:
+                    group["proxies"] = [new_name if cp == proxy_name else cp for cp in group["proxies"]]
+            all_proxy_names.add(proxy_name)
+
+    # check group name conflict
+    all_group_names = set()
+    for upstream_name, upstream in upstreams.items():
+        for group in upstream.groups:
+            if (group_name := group["name"]) in all_group_names:
+                # rename
+                cnt = 1
+                while (new_name := group["name"] + '+' + upstream_name) in all_group_names:
+                    cnt += 1
+                group["name"] = new_name
+            all_group_names.add(group_name)
+
+    return upstreams
 
 
 regexp = re.compile(r"(\b(HK|hongkong|TW|taiwan)\b|🇨🇳|🇭🇰|香港|台湾)", re.I)
@@ -162,39 +289,38 @@ def generate(config: Config) -> Dict:
     else:
         del instance["tun"]
 
-    upstream_proxies_chains = {}
 
-    proxy_names = set()
-    for key, upstream in config.upstreams.items():
+    # for key, upstream in config.upstreams.items():
+    def _retrieve(key, upstream: Upstream):
+        if not upstream.enabled and key not in config.secret_upstreams:
+            return None
         try:
-            proxies, chains = retrieve_upstream(upstream)
-
-            # Remove indicator proxies
-            proxies = [proxy for proxy in proxies if "有效期" not in proxy["name"]]
-            for chain in chains:
-                chain["proxies"] = [proxy for proxy in chain["proxies"]
-                                    if "有效期" not in proxy and proxy not in ["DIRECT", "REJECT", "GLOBAL"]]
-            chains = [chain for chain in chains if chain["proxies"]]
-
-            # check name collision
-            for proxy in proxies:
-                if (proxy_name := proxy['name']) in proxy_names:
-                    # find a new name for it
-                    cnt = 1
-                    while (new_name := proxy['name'] + '#' + str(cnt)) in proxy_names:
-                        cnt += 1
-                    # update name
-                    proxy['name'] = new_name
-                    for chain in chains:
-                        chain["proxies"] = [new_name if cp == proxy_name else cp for cp in chain["proxies"]]
-
-                proxy_names.add(proxy['name'])
-
-            upstream_proxies_chains[key] = proxies, chains
+            n_urls = len(upstream.urls)
+            if n_urls == 0:
+                raise Exception("No urls")
+            elif n_urls == 1:
+                return retrieve_upstream(upstream.urls[0], upstream.ttl, timeout=10)
+            else:
+                with ThreadPool(processes=min(os.cpu_count(), len(upstream.urls))) as pool:
+                    upstreams = pool.map(lambda u: retrieve_upstream(u, upstream.ttl, timeout=10), upstream.urls)
+                return stack_upstreams(upstreams)
         except Exception as e:
-            print(f"Failed to retrieve {upstream}: {e}\n{traceback.format_exc()}", flush=True)
+            logging.error(f"Failed to retrieve {upstream}: {e}\n{traceback.format_exc()}")
+            return None
 
-    instance["proxies"] = [proxy for proxies, chains in upstream_proxies_chains.values() for proxy in proxies]
+    with ThreadPool(processes=min(os.cpu_count(), len(config.upstreams))) as pool:
+        udatas = pool.map(lambda u: _retrieve(u[0], u[1]), config.upstreams.items())
+
+    upstream_datas: dict[str, UpstreamData] = {}
+    for key, udata in zip(config.upstreams.keys(), udatas):
+        if udata is None:
+            continue
+        upstream_datas[key] = udata
+
+    upstream_datas = rename_upstreams(upstream_datas)
+
+    instance["proxies"] = [proxy for ud in upstream_datas.values() for proxy in ud.proxies]
+    instance_proxies = DictList(instance["proxies"])
 
     proxy_groups = []
 
@@ -202,7 +328,7 @@ def generate(config: Config) -> Dict:
     all_proxies = {
         "name": "all",
         "type": "url-test",
-        "proxies": [proxy["name"] for proxy in instance["proxies"]],
+        "proxies": instance_proxies.keys(),
         "url": "http://www.gstatic.com/generate_204",
         "interval": 300,
         "tolerance": 100,
@@ -213,7 +339,7 @@ def generate(config: Config) -> Dict:
         all_proxies_cn = {
             "name": "all-cn",
             "type": "url-test",
-            "proxies": [proxy["name"] for proxy in instance["proxies"] if regexp.search(proxy["name"])],
+            "proxies": [pn for pn in instance_proxies.keys() if regexp.search(pn)],
             "url": "http://www.gstatic.com/generate_204",
             "interval": 300,
             "tolerance": 100,
@@ -225,7 +351,7 @@ def generate(config: Config) -> Dict:
         all_proxies_oversea = {
             "name": "all-oversea",
             "type": "url-test",
-            "proxies": [proxy["name"] for proxy in instance["proxies"] if regexp.search(proxy["name"]) is None],
+            "proxies": [pn for pn in instance_proxies.keys() if regexp.search(pn) is None],
             "url": "http://www.gstatic.com/generate_204",
             "interval": 300,
             "tolerance": 100,
@@ -237,7 +363,7 @@ def generate(config: Config) -> Dict:
         all_proxies_udp = {
             "name": "all-udp",
             "type": "url-test",
-            "proxies": [proxy["name"] for proxy in instance["proxies"] if proxy.get("udp", False)],
+            "proxies": [proxy["name"] for proxy in instance_proxies if proxy.get("udp", False)],
             "url": "http://www.gstatic.com/generate_204",
             "interval": 300,
             "tolerance": 100,
@@ -249,7 +375,7 @@ def generate(config: Config) -> Dict:
     #     all_proxies_udp_oversea = {
     #         "name": "all-udp-oversea",
     #         "type": "url-test",
-    #         "proxies": [proxy["name"] for proxy in instance["proxies"] if proxy.get("udp", False) and regexp.search(proxy["name"]) is None],
+    #         "proxies": [proxy["name"] for proxy in instance_proxies if proxy.get("udp", False) and regexp.search(proxy["name"]) is None],
     #         "url": "http://www.gstatic.com/generate_204",
     #         "interval": 300,
     #         "tolerance": 100,
@@ -258,11 +384,11 @@ def generate(config: Config) -> Dict:
     #         proxy_groups.append(all_proxies_udp_oversea)
 
     # upstream proxies invidually
-    for key, (proxies, chains) in upstream_proxies_chains.items():
+    for key, ud in upstream_datas.items():
         upstream_all_proxies = {
             "name": key,
             "type": "url-test",
-            "proxies": [proxy["name"] for proxy in proxies],
+            "proxies": ud.proxies.keys(),
             "url": "http://www.gstatic.com/generate_204",
             "interval": 300,
             "tolerance": 100,
@@ -273,7 +399,7 @@ def generate(config: Config) -> Dict:
             upstream_all_proxies_cn = {
                 "name": key + "-cn",
                 "type": "url-test",
-                "proxies": [proxy["name"] for proxy in proxies if regexp.search(proxy["name"])],
+                "proxies": [pn for pn in ud.proxies.keys() if regexp.search(pn)],
                 "url": "http://www.gstatic.com/generate_204",
                 "interval": 300,
                 "tolerance": 100,
@@ -285,7 +411,7 @@ def generate(config: Config) -> Dict:
             upstream_all_proxies_oversea = {
                 "name": key + "-oversea",
                 "type": "url-test",
-                "proxies": [proxy["name"] for proxy in proxies if regexp.search(proxy["name"]) is None],
+                "proxies": [pn for pn in ud.proxies.keys() if regexp.search(pn) is None],
                 "url": "http://www.gstatic.com/generate_204",
                 "interval": 300,
                 "tolerance": 100,
@@ -297,7 +423,7 @@ def generate(config: Config) -> Dict:
             upstream_all_proxies_udp = {
                 "name": key + "-udp",
                 "type": "url-test",
-                "proxies": [proxy["name"] for proxy in proxies if proxy.get("udp", False)],
+                "proxies": [proxy["name"] for proxy in ud.proxies if proxy.get("udp", False)],
                 "url": "http://www.gstatic.com/generate_204",
                 "interval": 300,
                 "tolerance": 100,
@@ -318,29 +444,29 @@ def generate(config: Config) -> Dict:
         #         proxy_groups.append(upstream_all_proxies_udp_oversea)
 
         if config.keep_upstream_chains:
-            for chain in chains:
-                if chain["type"] != "url-test":
+            for group in ud.groups:
+                if group["type"] != "url-test":
                     continue
 
-                if set(chain["proxies"]) == set(upstream_all_proxies["proxies"]):
+                if set(group["proxies"]) == set(upstream_all_proxies["proxies"]):
                     continue
 
-                chain = chain.copy()
+                group = group.copy()
 
-                chain["name"] = key + "-" + chain["name"]
-                proxy_groups.append(chain)
+                group["name"] = key + "-" + group["name"]
+                proxy_groups.append(group)
 
     chain_groups = []
 
     for custom_chain in PRESET_CHAINS + config.custom_chains:
-        chain = {
+        group = {
             "name": custom_chain,
             "type": "select",
             "proxies": (["PROXY"] if custom_chain != "PROXY" else []) + ["DIRECT"] + [pg["name"] for pg in proxy_groups]
         }
         if "direct" in config.custom_groups:
-            chain["proxies"].append("DIRECT")
-        chain_groups.append(chain)
+            group["proxies"].append("DIRECT")
+        chain_groups.append(group)
 
     instance["proxy-groups"] = chain_groups + proxy_groups
 
@@ -364,7 +490,7 @@ def convert_raw_list_to_rule_provider(raw_list: bytes) -> bytes:
 
 if __name__ == "__main__":
     import sys
-    print("Python version:", sys.version)
+    logging.info(f"Python version: {sys.version}")
     bind = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
     port = int(sys.argv[2]) if len(sys.argv) > 2 else 5000
 
@@ -377,7 +503,8 @@ if __name__ == "__main__":
         if "upstreams" not in args:
             with open("upstreams.yaml") as f:
                 args["upstreams"] = yaml.safe_load(f)
-        print(args, flush=True)
+        client_ip = request.headers.get("X-Real-IP", request.remote_addr)
+        logging.info(f"{client_ip} {args}")
         try:
             config = Config(**args)
             clash_config = generate(config)
@@ -385,9 +512,9 @@ if __name__ == "__main__":
                 value["url"] = url_for("forward", key=rp, _external=True, _scheme="http")
             stream = yaml.safe_dump(clash_config, allow_unicode=True, sort_keys=False)
         except Exception as e:
-            print(f"Generate config failed: {e}\n{traceback.format_exc()}", flush=True)
+            logging.error(f"Generate config failed: {e}\n{traceback.format_exc()}")
             return str(e), 500
-        return Response(stream, mimetype="text/yaml")
+        return Response(stream, content_type="text/yaml; charset=utf-8")
 
     @app.get("/clash/forward")
     def forward():
@@ -396,8 +523,8 @@ if __name__ == "__main__":
             return "Not found", 404
         url = TEMPLATE["rule-providers"][key]["url"]
         if url.startswith("raw://"):
-            return retrieve(url[6:], 86400, convert_raw_list_to_rule_provider)
-        return retrieve(url, 86400)
+            return retrieve(url[6:], 86400, convert_raw_list_to_rule_provider), 200, {"Content-Type": "text/yaml; charset=utf-8"}
+        return retrieve(url, 86400), 200, {"Content-Type": "text/yaml; charset=utf-8"}
 
     from gevent.pywsgi import WSGIServer
     http_server = WSGIServer((bind, port), app)
