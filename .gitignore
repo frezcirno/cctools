@@ -2,3 +2,6 @@ venv/
 cache/
 upstreams.yaml
 *.log
+__pycache__/
+.pytest_cache/
+.vscode/
