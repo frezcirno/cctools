@@ -147,6 +147,10 @@ class UpstreamData:
     proxies: DictList
     groups: DictList
 
+    def __post_init__(self):
+        self.proxies = DictList(self.proxies)
+        self.groups = DictList(self.groups)
+
     def remove_indicator(self):
         self.proxies = self.proxies.filter(lambda proxy: all(b not in proxy["name"] for b in PROXY_BLACKLIST))
 
