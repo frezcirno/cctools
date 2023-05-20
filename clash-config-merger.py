@@ -34,8 +34,8 @@ DEFAULT_CONTROLLER_PORT = 9090
 with open("./template.yaml") as f:
     TEMPLATE = yaml.safe_load(f)
 
-PRESET_CHAINS = ["PROXY", "PROXY-UDP"] + list({rule.split(",")[2] for rule in TEMPLATE["rules"]
-                                              if rule.count(",") > 1} - {"DIRECT", "REJECT", "PROXY", "PROXY-UDP"})
+PRESET_CHAINS = ["PROXY"] + list({rule.split(",")[2] for rule in TEMPLATE["rules"]
+                                  if rule.count(",") > 1} - {"DIRECT", "REJECT", "PROXY", "UDP", "FALLBACK"}) + ["UDP", "FALLBACK"]
 
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36"
 
@@ -485,14 +485,19 @@ def generate(config: Config) -> Dict:
     chain_groups = []
 
     for custom_chain in PRESET_CHAINS + config.custom_chains:
-        group = {
+        if custom_chain == "FALLBACK":
+            chain_groups.append({
+                "name": "FALLBACK",
+                "type": "select",
+                "proxies": ["PROXY", "DIRECT"]
+            })
+            continue
+        chain_group = {
             "name": custom_chain,
             "type": "select",
             "proxies": (["PROXY"] if custom_chain != "PROXY" else []) + ["DIRECT"] + [pg["name"] for pg in proxy_groups]
         }
-        if "direct" in config.custom_groups:
-            group["proxies"].append("DIRECT")
-        chain_groups.append(group)
+        chain_groups.append(chain_group)
 
     instance["proxy-groups"] = chain_groups + proxy_groups
 
