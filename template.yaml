@@ -311,6 +311,13 @@ rule-providers:
     path: ./ruleset/ZJU-Rule_ZJU-More-Scholar.yaml
     interval: 86400
 
+  openai:
+    type: http
+    behavior: classical
+    url: "raw://https://raw.githubusercontent.com/ZJU-Rule/ZJU-Rule/master/Clash/Ruleset/OpenAi.list"
+    path: ./ruleset/ZJU-Rule_OpenAi.yaml
+    interval: 86400
+
   chatbot:
     type: http
     behavior: classical
@@ -320,17 +327,19 @@ rule-providers:
 
 script:
   shortcuts:
-    git_ssh: (host == 'github.com' or host == 'gitlab.com') and dst_port == 22
-    openai_udp: host == 'openai.com' and network == 'udp'
+    # git_ssh: (host == 'github.com' or host == 'gitlab.com') and dst_port == 22
+    git: host == 'github.com' or host == 'gitlab.com'
+    # openai_udp: host == 'openai.com' and network == 'udp'
     udp: network == 'udp'
 
 rules:
   # custom
   - RULE-SET,zju_internal,DIRECT
   - RULE-SET,scholar,PROXY
-  - SCRIPT,openai_udp,CHATBOT
+  #- SCRIPT,openai_udp,CHATBOT
+  - RULE-SET,openai,CHATBOT
   - RULE-SET,chatbot,CHATBOT
-  - SCRIPT,git_ssh,GIT
+  - SCRIPT,git,GIT
   - PROCESS-NAME,git-remote-http,GIT
   - PROCESS-NAME,git-remote-http.exe,GIT
   - PROCESS-NAME,git-remote-https,GIT

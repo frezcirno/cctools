@@ -91,33 +91,66 @@ class UpstreamSpec:
     urls: list[str] = Field(default_factory=list)
     ttl: int = 3600
     enabled: bool = True
+    tags: list[str] = Field(default_factory=list)
 
+    def __post_init_post_parse__(self):
+        if 'default' not in self.tags:
+            self.tags.append('default')
 
 @dataclass
 class Config:
+    # Proxy mode
     mode: Mode = Mode.PROXY
+
+    # Whether to allow LAN
     trusted: bool = True
 
+    # HTTP port
     port: Optional[int] = None
+
+    # SOCKS5 port
     socks_port: Optional[int] = None
+
+    # Redir port
     redir_port: Optional[int] = None
+
+    # TProxy port
     tproxy_port: Optional[int] = None
+
+    # HTTP and SOCKS5 mixed port
     mixed_port: Optional[int] = None
 
+    # Clash controller port
     controller_port: int = DEFAULT_CONTROLLER_PORT
+
+    # Clash controller secret
     secret: Optional[str] = None
 
-    fake_ip: bool = True  # deprecated
-
+    # Whether to enable DNS
     dns: bool = False
+
+    # DNS listen address
+    dns_listen: str = "127.0.0.1"
+
+    # DNS listen port
+    dns_port: int = 53
+
+    # DHCP interface for TUN mode
     eth: Optional[str] = None
 
+    # Whether to keep upstream chains
     keep_upstream_chains: bool = False
+
+    # Custom upstreams
     custom_groups: List[str] = Field(default_factory=list)
 
+    # Upstreams
     upstreams: Dict[str, UpstreamSpec] = Field(default_factory=dict)
+
+    # Custom chains
     custom_chains: List[str] = Field(default_factory=list)
 
+    # Enabled upstreams
     secret_upstreams: List[str] = Field(default_factory=list)
 
     @staticmethod
@@ -129,7 +162,7 @@ class Config:
     def __post_init__(self):
         if self.trusted == '':
             self.trusted = True
-        if self.dns == '':
+        if self.dns in {'', 'y', 'yes', '1', 'on', 't', 'true'}:
             self.dns = True
         if self.keep_upstream_chains == '':
             self.keep_upstream_chains = True
@@ -141,6 +174,9 @@ class Config:
     def __post_init_post_parse__(self):
         pass
 
+    @property
+    def dns_addr(self):
+        return f"{self.dns_listen}:{self.dns_port}"
 
 @dataclass
 class UpstreamData:
@@ -175,11 +211,14 @@ def retrieve(url: str, ttl=3600, mutator=None, timeout=None) -> bytes:
             with open(save_path, "rb") as f:
                 return f.read()
 
-    resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=timeout)
-    if not resp.ok:
-        raise Exception("Failed to retrieve upstream")
-
-    content = resp.content
+    if url.startswith("file://"):
+        with open(url[7:], "rb") as f:
+            content = f.read()
+    else:
+        resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=timeout)
+        if not resp.ok:
+            raise Exception("Failed to retrieve upstream")
+        content = resp.content
     if mutator:
         content = mutator(content)
 
@@ -305,7 +344,7 @@ def generate(config: Config) -> Dict:
 
     if config.dns:
         instance["dns"]["enable"] = True
-        instance["dns"]["listen"] = "0.0.0.0:53" if config.mode == Mode.REDIR else "127.0.0.53:53"
+        instance["dns"]["listen"] = f"0.0.0.0:{config.dns_port}" if config.mode == Mode.REDIR else config.dns_addr
         instance["dns"]["enhanced-mode"] = "fake-ip"
         if config.mode != Mode.PROXY:
             instance["dns"]["nameserver"].append(f"dhcp://{config.eth}")
@@ -318,7 +357,7 @@ def generate(config: Config) -> Dict:
         del instance["tun"]
 
     def _retrieve(key, upstream: UpstreamSpec):
-        if not upstream.enabled and key not in config.secret_upstreams:
+        if not upstream.enabled and key not in config.secret_upstreams and not any(tag in config.secret_upstreams for tag in upstream.tags):
             return None
         try:
             n_urls = len(upstream.urls)
@@ -547,9 +586,8 @@ if __name__ == "__main__":
     @app.get("/clash/config.yaml")
     def generate_yaml():
         args = request.values.to_dict()
-        if "upstreams" not in args:
-            with open("upstreams.yaml") as f:
-                args["upstreams"] = yaml.safe_load(f)
+        with open("upstreams.yaml") as f:
+            args["upstreams"] = yaml.safe_load(f)
         client_ip = request.headers.get("X-Real-IP", request.remote_addr)
         logging.info(f"{client_ip} {args}")
         try:
