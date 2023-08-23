@@ -327,8 +327,9 @@ rule-providers:
 
 script:
   shortcuts:
+    port22: dst_port == 22
     # git_ssh: (host == 'github.com' or host == 'gitlab.com') and dst_port == 22
-    git: host == 'github.com' or host == 'gitlab.com'
+    # git: host == 'github.com' or host == 'gitlab.com'
     # openai_udp: host == 'openai.com' and network == 'udp'
     udp: network == 'udp'
 
@@ -339,7 +340,8 @@ rules:
   #- SCRIPT,openai_udp,CHATBOT
   - RULE-SET,openai,CHATBOT
   - RULE-SET,chatbot,CHATBOT
-  - SCRIPT,git,GIT
+  - SCRIPT,port22,DIRECT
+  # - SCRIPT,git,GIT
   # - PROCESS-NAME,git-remote-http,GIT
   # - PROCESS-NAME,git-remote-http.exe,GIT
   # - PROCESS-NAME,git-remote-https,GIT

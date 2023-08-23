@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 import copy
 import logging
 import os
@@ -14,7 +15,7 @@ from typing import Dict, Iterable, List, Optional
 
 import requests
 import yaml
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic.dataclasses import dataclass
 
 logging.basicConfig(
@@ -39,7 +40,7 @@ PRESET_CHAINS = ["PROXY"] + list({rule.split(",")[2] for rule in TEMPLATE["rules
 
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36"
 
-REGEXP = re.compile(r"(\b(HK|hongkong|TW|taiwan)\b|🇨🇳|🇭🇰|香港|台湾)", re.I)
+REGEXP = re.compile(r"(\b(hk|hongkong|hong kong|tw|taiwan)\b|🇨🇳|🇭🇰|香港|台湾)", re.I)
 
 PROXY_BLACKLIST = ["DIRECT", "REJECT", "GLOBAL", "✉️", "有效期", "群", "感谢", "非线路"]
 
@@ -93,9 +94,12 @@ class UpstreamSpec:
     enabled: bool = True
     tags: list[str] = Field(default_factory=list)
 
-    def __post_init_post_parse__(self):
-        if 'default' not in self.tags:
-            self.tags.append('default')
+    @model_validator(mode='before')
+    def pre_root(cls, data):
+        data.setdefault('tags', [])
+        if 'default' not in data['tags']:
+            data['tags'].append('default')
+        return data
 
 @dataclass
 class Config:
@@ -153,39 +157,37 @@ class Config:
     # Enabled upstreams
     secret_upstreams: List[str] = Field(default_factory=list)
 
-    @staticmethod
-    def from_dict(data: dict):
-        if 'http_port' in data:
-            data['port'] = data.pop('http_port')
-        return Config(**data)
+    use_relay_rule_provider: bool = True
 
-    def __post_init__(self):
-        if self.trusted == '':
-            self.trusted = True
-        if self.dns in {'', 'y', 'yes', '1', 'on', 't', 'true'}:
-            self.dns = True
-        if self.keep_upstream_chains == '':
-            self.keep_upstream_chains = True
-        if isinstance(self.custom_groups, str):
-            self.custom_groups = self.custom_groups.split(",") if self.custom_groups else []
-        if isinstance(self.secret_upstreams, str):
-            self.secret_upstreams = self.secret_upstreams.split(",") if self.secret_upstreams else []
-
-    def __post_init_post_parse__(self):
-        pass
+    @model_validator(mode='before')
+    def pre_root(cls, allargs) -> dict:
+        kwargs = allargs.kwargs
+        if 'http_port' in kwargs:
+            kwargs['port'] = kwargs.pop('http_port')
+        if 'trusted' in kwargs:
+            kwargs['trusted'] = kwargs['trusted'] in {'', 'y', 'yes', '1', 'on', 't', 'true'}
+        if 'dns' in kwargs:
+            kwargs['dns'] = kwargs['dns'] in {'', 'y', 'yes', '1', 'on', 't', 'true'}
+        if 'keep_upstream_chains' in kwargs:
+            kwargs['keep_upstream_chains'] = kwargs['keep_upstream_chains'] in {'', 'y', 'yes', '1', 'on', 't', 'true'}
+        if 'custom_groups' in kwargs:
+            kwargs['custom_groups'] = kwargs['custom_groups'].split(",") if kwargs['custom_groups'] else []
+        if 'custom_chains' in kwargs:
+            kwargs['custom_chains'] = kwargs['custom_chains'].split(",") if kwargs['custom_chains'] else []
+        if 'secret_upstreams' in kwargs:
+            kwargs['secret_upstreams'] = kwargs['secret_upstreams'].split(",") if kwargs['secret_upstreams'] else []
+        if 'use_relay_rule_provider' in kwargs:
+            kwargs['use_relay_rule_provider'] = kwargs['use_relay_rule_provider'] in {'', 'y', 'yes', '1', 'on', 't', 'true'}
+        return allargs
 
     @property
     def dns_addr(self):
         return f"{self.dns_listen}:{self.dns_port}"
 
-@dataclass
+@dataclass(config={"arbitrary_types_allowed": True})
 class UpstreamData:
     proxies: DictList
     groups: DictList
-
-    def __post_init__(self):
-        self.proxies = DictList(self.proxies)
-        self.groups = DictList(self.groups)
 
     def remove_indicator(self):
         self.proxies = self.proxies.filter(lambda proxy: all(b not in proxy["name"] for b in PROXY_BLACKLIST))
@@ -233,8 +235,8 @@ def retrieve_upstream(upstream: str, ttl=3600, timeout=None) -> UpstreamData:
     content = retrieve(upstream, ttl, timeout=timeout)
     obj = yaml.safe_load(content)
 
-    proxies = obj["proxies"]
-    groups = obj["proxy-groups"]
+    proxies = DictList(obj["proxies"])
+    groups = DictList(obj["proxy-groups"])
 
     ud = UpstreamData(proxies, groups)
     ud.remove_indicator()
@@ -378,7 +380,7 @@ def generate(config: Config) -> Dict:
 
     upstream_datas: dict[str, UpstreamData] = {}
     for key, udata in zip(config.upstreams.keys(), udatas):
-        if udata is None:
+        if udata is None or len(udata.proxies) == 0:
             continue
         upstream_datas[key] = udata
 
@@ -559,7 +561,7 @@ def convert_raw_list_to_rule_provider(raw_list: bytes) -> bytes:
 
 
 def test_parse_smoke():
-    config = Config.from_dict({
+    config = Config({
         "mode": "tun",
         "eth": "aaa",
         "custom_groups": "cn,oversea,udp-oversea",
@@ -591,10 +593,11 @@ if __name__ == "__main__":
         client_ip = request.headers.get("X-Real-IP", request.remote_addr)
         logging.info(f"{client_ip} {args}")
         try:
-            config = Config.from_dict(args)
+            config = Config(**args)
             clash_config = generate(config)
-            for rp, value in clash_config["rule-providers"].items():
-                value["url"] = url_for("forward", key=rp, _external=True, _scheme="http")
+            if config.use_relay_rule_provider:
+                for rp, value in clash_config["rule-providers"].items():
+                    value["url"] = url_for("forward", key=rp, _external=True, _scheme="http")
             stream = yaml.safe_dump(clash_config, allow_unicode=True, sort_keys=False)
         except Exception as e:
             logging.error(f"Generate config failed: {e}\n{traceback.format_exc()}")
