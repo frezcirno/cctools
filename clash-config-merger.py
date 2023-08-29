@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import base64
 import copy
 import logging
 import os
@@ -588,8 +589,13 @@ if __name__ == "__main__":
     @app.get("/clash/config.yaml")
     def generate_yaml():
         args = request.values.to_dict()
-        with open("upstreams.yaml") as f:
-            args["upstreams"] = yaml.safe_load(f)
+        if os.path.exists("upstreams.yaml"):
+            with open("upstreams.yaml") as f:
+                args["upstreams"] = yaml.safe_load(f)
+        elif env := os.environ.get("UPSTREAMS"):
+            args["upstreams"] = yaml.safe_load(base64.b64decode(env))
+        else:
+            return "No upstreams", 500
         client_ip = request.headers.get("X-Real-IP", request.remote_addr)
         logging.info(f"{client_ip} {args}")
         try:
