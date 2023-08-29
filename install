@@ -20,7 +20,7 @@ Type=simple
 Restart=on-failure
 RestartSec=5s
 WorkingDirectory=${DIR}
-ExecStart=${DIR}/venv/bin/python ${DIR}/clash-config-merger.py
+ExecStart=${DIR}/venv/bin/python ${DIR}/index.py
 LimitNOFILE=1048576
 
 [Install]

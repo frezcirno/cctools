@@ -9,4 +9,4 @@ python3 -m venv ${DIR}/venv
 source ${DIR}/venv/bin/activate
 pip install -r ${DIR}/requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
-python ./clash-config-merger.py
+python ./index.py

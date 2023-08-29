@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import base64
 import copy
 import logging
 import os
@@ -10,7 +9,7 @@ import time
 import traceback
 from enum import Enum
 from hashlib import sha1
-from multiprocessing.pool import ThreadPool
+# from multiprocessing.pool import ThreadPool
 from random import choices
 from typing import Dict, Iterable, List, Optional
 
@@ -18,13 +17,6 @@ import requests
 import yaml
 from pydantic import Field, model_validator
 from pydantic.dataclasses import dataclass
-
-logging.basicConfig(
-    level=logging.INFO,
-    filename="clash-config-merger.log",
-    format="%(asctime)s.%(msecs)d %(levelname)s %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 
 DEFAULT_HTTP_PORT = 7890
 DEFAULT_SOCKS_PORT = 7891
@@ -35,6 +27,8 @@ DEFAULT_CONTROLLER_PORT = 9090
 
 with open("./template.yaml") as f:
     TEMPLATE = yaml.safe_load(f)
+
+DISABLE_CACHE = os.environ.get("DISABLE_CACHE", "0") in {"", "y", "yes", "1", "on", "t", "true"}
 
 PRESET_CHAINS = ["PROXY"] + list({rule.split(",")[2] for rule in TEMPLATE["rules"]
                                   if rule.count(",") > 1} - {"DIRECT", "REJECT", "PROXY", "UDP", "FALLBACK"}) + ["UDP", "FALLBACK"]
@@ -225,9 +219,10 @@ def retrieve(url: str, ttl=3600, mutator=None, timeout=None) -> bytes:
     if mutator:
         content = mutator(content)
 
-    os.makedirs("./cache", exist_ok=True)
-    with open(save_path, "wb") as f:
-        f.write(content)
+    if not DISABLE_CACHE:
+        os.makedirs("./cache", exist_ok=True)
+        with open(save_path, "wb") as f:
+            f.write(content)
 
     return content
 
@@ -369,15 +364,17 @@ def generate(config: Config) -> Dict:
             elif n_urls == 1:
                 return retrieve_upstream(upstream.urls[0], upstream.ttl, timeout=10)
             else:
-                with ThreadPool(processes=min(os.cpu_count(), len(upstream.urls))) as pool:
-                    upstreams = pool.map(lambda u: retrieve_upstream(u, upstream.ttl, timeout=10), upstream.urls)
+                # with ThreadPool(processes=min(os.cpu_count(), len(upstream.urls))) as pool:
+                #     upstreams = pool.map(lambda u: retrieve_upstream(u, upstream.ttl, timeout=10), upstream.urls)
+                upstreams = [retrieve_upstream(u, upstream.ttl, timeout=10) for u in upstream.urls]
                 return stack_upstreams(upstreams)
         except Exception as e:
             logging.error(f"Failed to retrieve {upstream}: {e}\n{traceback.format_exc()}")
             return None
 
-    with ThreadPool(processes=min(os.cpu_count() or 4, len(config.upstreams))) as pool:
-        udatas = pool.map(lambda u: _retrieve(u[0], u[1]), config.upstreams.items())
+    # with ThreadPool(processes=min(os.cpu_count() or 4, len(config.upstreams))) as pool:
+    #     udatas = pool.map(lambda u: _retrieve(u[0], u[1]), config.upstreams.items())
+    udatas = [_retrieve(u[0], u[1]) for u in config.upstreams.items()]
 
     upstream_datas: dict[str, UpstreamData] = {}
     for key, udata in zip(config.upstreams.keys(), udatas):
@@ -575,51 +572,3 @@ def test_parse_smoke():
     assert config.eth == "aaa"
     assert config.dns == True
     assert config.port == 12345
-
-
-if __name__ == "__main__":
-    import sys
-    logging.info(f"Python version: {sys.version}")
-    bind = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
-    port = int(sys.argv[2]) if len(sys.argv) > 2 else 5000
-
-    from flask import Flask, Response, request, url_for
-    app = Flask(__name__)
-
-    @app.get("/clash/config.yaml")
-    def generate_yaml():
-        args = request.values.to_dict()
-        if os.path.exists("upstreams.yaml"):
-            with open("upstreams.yaml") as f:
-                args["upstreams"] = yaml.safe_load(f)
-        elif env := os.environ.get("UPSTREAMS"):
-            args["upstreams"] = yaml.safe_load(base64.b64decode(env))
-        else:
-            return "No upstreams", 500
-        client_ip = request.headers.get("X-Real-IP", request.remote_addr)
-        logging.info(f"{client_ip} {args}")
-        try:
-            config = Config(**args)
-            clash_config = generate(config)
-            if config.use_relay_rule_provider:
-                for rp, value in clash_config["rule-providers"].items():
-                    value["url"] = url_for("forward", key=rp, _external=True, _scheme="http")
-            stream = yaml.safe_dump(clash_config, allow_unicode=True, sort_keys=False)
-        except Exception as e:
-            logging.error(f"Generate config failed: {e}\n{traceback.format_exc()}")
-            return str(e), 500
-        return Response(stream, content_type="text/yaml; charset=utf-8")
-
-    @app.get("/clash/forward")
-    def forward():
-        key = request.values.get("key")
-        if key not in TEMPLATE["rule-providers"]:
-            return "Not found", 404
-        url = TEMPLATE["rule-providers"][key]["url"]
-        if url.startswith("raw://"):
-            return retrieve(url[6:], 86400, convert_raw_list_to_rule_provider), 200, {"Content-Type": "text/yaml; charset=utf-8"}
-        return retrieve(url, 86400), 200, {"Content-Type": "text/yaml; charset=utf-8"}
-
-    from gevent.pywsgi import WSGIServer
-    http_server = WSGIServer((bind, port), app)
-    http_server.serve_forever()

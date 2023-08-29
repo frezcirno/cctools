@@ -300,28 +300,28 @@ rule-providers:
   zju_internal:
     type: http
     behavior: classical
-    url: "raw://https://raw.githubusercontent.com/ZJU-Rule/ZJU-Rule/master/Clash/ZJU.list"
+    url: "https://raw.githubusercontent.com/ZJU-Rule/ZJU-Rule/master/Clash/ZJU.list#convert"
     path: ./ruleset/ZJU-Rule_ZJU.yaml
     interval: 86400
 
   scholar:
     type: http
     behavior: classical
-    url: "raw://https://raw.githubusercontent.com/ZJU-Rule/ZJU-Rule/master/Clash/ZJU-More-Scholar.list"
+    url: "https://raw.githubusercontent.com/ZJU-Rule/ZJU-Rule/master/Clash/ZJU-More-Scholar.list#convert"
     path: ./ruleset/ZJU-Rule_ZJU-More-Scholar.yaml
     interval: 86400
 
   openai:
     type: http
     behavior: classical
-    url: "raw://https://raw.githubusercontent.com/ZJU-Rule/ZJU-Rule/master/Clash/Ruleset/OpenAi.list"
+    url: "https://raw.githubusercontent.com/ZJU-Rule/ZJU-Rule/master/Clash/Ruleset/OpenAi.list#convert"
     path: ./ruleset/ZJU-Rule_OpenAi.yaml
     interval: 86400
 
   chatbot:
     type: http
     behavior: classical
-    url: "raw://https://raw.githubusercontent.com/ZJU-Rule/ZJU-Rule/master/Clash/Ruleset/ChatBot.list"
+    url: "https://raw.githubusercontent.com/ZJU-Rule/ZJU-Rule/master/Clash/Ruleset/ChatBot.list#convert"
     path: ./ruleset/ZJU-Rule_ChatBot.yaml
     interval: 86400
 
