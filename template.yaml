@@ -113,7 +113,18 @@ dns:
   # real IP addresses
   fake-ip-filter:
     - "*.lan"
-  #   - localhost.ptlogin2.qq.com
+    - +.stun.*.*
+    - +.stun.*.*.*
+    - +.stun.*.*.*.*
+    - +.stun.*.*.*.*.*
+    - "*.n.n.srv.nintendo.net"
+    - +.stun.playstation.net
+    - xbox.*.*.microsoft.com
+    - "*.*.xboxlive.com"
+    - "*.msftncsi.com"
+    - "*.msftconnecttest.com"
+    - localhost.ptlogin2.qq.com
+    - WORKGROUP
 
   # Supports UDP, TCP, DoT, DoH. You can specify the port to connect to.
   # All DNS questions are sent directly to the nameserver, without proxies
@@ -152,6 +163,7 @@ dns:
   # This is a countermeasure against DNS pollution attacks.
   fallback-filter:
     geoip: true
+    geoip-code: CN
     ipcidr:
       - 240.0.0.0/4 # 1111****.0.0.0
       - 0.0.0.0/32
@@ -168,6 +180,7 @@ dns:
   # Lookup domains via specific nameservers
   nameserver-policy:
     "+.cn": "223.5.5.5"
+    "+.zju.edu.cn": "223.5.5.5" # will be replaced
 
 # Use Linux kernel nftables feature on pure Go. It can be replaced with redir-port (TCP) without any network config.
 #
@@ -202,126 +215,126 @@ rule-providers:
   reject:
     type: http
     behavior: domain
-    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/reject.txt"
+    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/reject.txt"
     path: ./ruleset/reject.yaml
     interval: 86400
 
   icloud:
     type: http
     behavior: domain
-    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/icloud.txt"
+    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/icloud.txt"
     path: ./ruleset/icloud.yaml
     interval: 86400
 
   apple:
     type: http
     behavior: domain
-    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/apple.txt"
+    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/apple.txt"
     path: ./ruleset/apple.yaml
     interval: 86400
 
   google:
     type: http
     behavior: domain
-    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/google.txt"
+    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/google.txt"
     path: ./ruleset/google.yaml
     interval: 86400
 
   proxy:
     type: http
     behavior: domain
-    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/proxy.txt"
+    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/proxy.txt"
     path: ./ruleset/proxy.yaml
     interval: 86400
 
   direct:
     type: http
     behavior: domain
-    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/direct.txt"
+    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/direct.txt"
     path: ./ruleset/direct.yaml
     interval: 86400
 
   private:
     type: http
     behavior: domain
-    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/private.txt"
+    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/private.txt"
     path: ./ruleset/private.yaml
     interval: 86400
 
   gfw:
     type: http
     behavior: domain
-    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/gfw.txt"
+    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/gfw.txt"
     path: ./ruleset/gfw.yaml
     interval: 86400
 
   greatfire:
     type: http
     behavior: domain
-    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/greatfire.txt"
+    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/greatfire.txt"
     path: ./ruleset/greatfire.yaml
     interval: 86400
 
   tld-not-cn:
     type: http
     behavior: domain
-    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/tld-not-cn.txt"
+    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/tld-not-cn.txt"
     path: ./ruleset/tld-not-cn.yaml
     interval: 86400
 
   telegramcidr:
     type: http
     behavior: ipcidr
-    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/telegramcidr.txt"
+    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/telegramcidr.txt"
     path: ./ruleset/telegramcidr.yaml
     interval: 86400
 
   cncidr:
     type: http
     behavior: ipcidr
-    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/cncidr.txt"
+    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/cncidr.txt"
     path: ./ruleset/cncidr.yaml
     interval: 86400
 
   lancidr:
     type: http
     behavior: ipcidr
-    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/lancidr.txt"
+    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/lancidr.txt"
     path: ./ruleset/lancidr.yaml
     interval: 86400
 
   applications:
     type: http
     behavior: classical
-    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/applications.txt"
+    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/applications.txt"
     path: ./ruleset/applications.yaml
     interval: 86400
 
   zju_internal:
     type: http
     behavior: classical
-    url: "https://raw.githubusercontent.com/ZJU-Rule/ZJU-Rule/master/Clash/ZJU.list#convert"
+    url: "https://service-hgw60j46-1257316374.hk.apigw.tencentcs.com/?url=https://jsd.cdn.zzko.cn/gh/ZJU-Rule/ZJU-Rule/Clash/ZJU.list"
     path: ./ruleset/ZJU-Rule_ZJU.yaml
     interval: 86400
 
   scholar:
     type: http
     behavior: classical
-    url: "https://raw.githubusercontent.com/ZJU-Rule/ZJU-Rule/master/Clash/ZJU-More-Scholar.list#convert"
+    url: "https://service-hgw60j46-1257316374.hk.apigw.tencentcs.com/?url=https://jsd.cdn.zzko.cn/gh/ZJU-Rule/ZJU-Rule/Clash/ZJU-More-Scholar.list"
     path: ./ruleset/ZJU-Rule_ZJU-More-Scholar.yaml
     interval: 86400
 
   openai:
     type: http
     behavior: classical
-    url: "https://raw.githubusercontent.com/ZJU-Rule/ZJU-Rule/master/Clash/Ruleset/OpenAi.list#convert"
+    url: "https://service-hgw60j46-1257316374.hk.apigw.tencentcs.com/?url=https://jsd.cdn.zzko.cn/gh/ZJU-Rule/ZJU-Rule/Clash/Ruleset/OpenAi.list"
     path: ./ruleset/ZJU-Rule_OpenAi.yaml
     interval: 86400
 
   chatbot:
     type: http
     behavior: classical
-    url: "https://raw.githubusercontent.com/ZJU-Rule/ZJU-Rule/master/Clash/Ruleset/ChatBot.list#convert"
+    url: "https://service-hgw60j46-1257316374.hk.apigw.tencentcs.com/?url=https://jsd.cdn.zzko.cn/gh/ZJU-Rule/ZJU-Rule/Clash/Ruleset/ChatBot.list"
     path: ./ruleset/ZJU-Rule_ChatBot.yaml
     interval: 86400
 

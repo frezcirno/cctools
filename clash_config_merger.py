@@ -9,6 +9,7 @@ import time
 import traceback
 from enum import Enum
 from hashlib import sha1
+
 # from multiprocessing.pool import ThreadPool
 from random import choices
 from typing import Dict, Iterable, List, Optional
@@ -28,16 +29,28 @@ DEFAULT_CONTROLLER_PORT = 9090
 with open("./template.yaml") as f:
     TEMPLATE = yaml.safe_load(f)
 
-DISABLE_CACHE = os.environ.get("DISABLE_CACHE", "0") in {"", "y", "yes", "1", "on", "t", "true"}
+YES_OPTIONS = {"", "y", "yes", "1", "on", "t", "true"}
 
-PRESET_CHAINS = ["PROXY"] + list({rule.split(",")[2] for rule in TEMPLATE["rules"]
-                                  if rule.count(",") > 1} - {"DIRECT", "REJECT", "PROXY", "UDP", "FALLBACK"}) + ["UDP", "FALLBACK"]
+DISABLE_CACHE = os.environ.get("DISABLE_CACHE", "0") in YES_OPTIONS
 
-USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36"
+PRESET_CHAINS = (
+    ["PROXY"]
+    + list(
+        {rule.split(",")[2] for rule in TEMPLATE["rules"] if rule.count(",") > 1}
+        - {"DIRECT", "REJECT", "PROXY", "UDP", "FALLBACK"}
+    )
+    + ["UDP", "FALLBACK"]
+)
+
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36"
 
 REGEXP = re.compile(r"(\b(hk|hongkong|hong kong|tw|taiwan)\b|🇨🇳|🇭🇰|香港|台湾)", re.I)
 
 PROXY_BLACKLIST = ["DIRECT", "REJECT", "GLOBAL", "✉️", "有效期", "群", "感谢", "非线路"]
+
+
+def random_str(length=32):
+    return "".join(choices(string.ascii_letters + string.digits, k=length))
 
 
 class DictList(list):
@@ -84,17 +97,23 @@ class Mode(str, Enum):
 
 @dataclass
 class UpstreamSpec:
+    name: str
     urls: list[str] = Field(default_factory=list)
     ttl: int = 3600
     enabled: bool = True
     tags: list[str] = Field(default_factory=list)
 
-    @model_validator(mode='before')
+    @model_validator(mode="before")
     def pre_root(cls, data):
-        data.setdefault('tags', [])
-        if 'default' not in data['tags']:
-            data['tags'].append('default')
+        data.setdefault("tags", [])
+        data["tags"].append("all")
+        if "enabled" in data:
+            data["enabled"] = data["enabled"] in YES_OPTIONS
+            if data["enabled"]:
+                data["tags"].append("default")
+        data["tags"].append(data["name"])
         return data
+
 
 @dataclass
 class Config:
@@ -126,7 +145,7 @@ class Config:
     secret: Optional[str] = None
 
     # Whether to enable DNS
-    dns: bool = False
+    dns: Optional[bool] = None
 
     # DNS listen address
     dns_listen: str = "127.0.0.1"
@@ -137,47 +156,52 @@ class Config:
     # DHCP interface for TUN mode
     eth: Optional[str] = None
 
-    # Whether to keep upstream chains
-    keep_upstream_chains: bool = False
+    # Whether to keep upstream selectors
+    keep_upstream_selector: bool = False
 
     # Custom upstreams
-    custom_groups: List[str] = Field(default_factory=list)
+    group: List[str] = Field(default_factory=list)
 
     # Upstreams
-    upstreams: Dict[str, UpstreamSpec] = Field(default_factory=dict)
+    all_upstream: Dict[str, UpstreamSpec] = Field(default_factory=dict)
 
-    # Custom chains
-    custom_chains: List[str] = Field(default_factory=list)
+    # Custom selectors
+    selector: List[str] = Field(default_factory=list)
 
     # Enabled upstreams
-    secret_upstreams: List[str] = Field(default_factory=list)
+    upstream: List[str] = Field(default_factory=list)
 
-    use_relay_rule_provider: bool = True
+    use_relay_rule_provider: bool = False
 
-    @model_validator(mode='before')
+    @model_validator(mode="before")
     def pre_root(cls, allargs) -> dict:
         kwargs = allargs.kwargs
-        if 'http_port' in kwargs:
-            kwargs['port'] = kwargs.pop('http_port')
-        if 'trusted' in kwargs:
-            kwargs['trusted'] = kwargs['trusted'] in {'', 'y', 'yes', '1', 'on', 't', 'true'}
-        if 'dns' in kwargs:
-            kwargs['dns'] = kwargs['dns'] in {'', 'y', 'yes', '1', 'on', 't', 'true'}
-        if 'keep_upstream_chains' in kwargs:
-            kwargs['keep_upstream_chains'] = kwargs['keep_upstream_chains'] in {'', 'y', 'yes', '1', 'on', 't', 'true'}
-        if 'custom_groups' in kwargs:
-            kwargs['custom_groups'] = kwargs['custom_groups'].split(",") if kwargs['custom_groups'] else []
-        if 'custom_chains' in kwargs:
-            kwargs['custom_chains'] = kwargs['custom_chains'].split(",") if kwargs['custom_chains'] else []
-        if 'secret_upstreams' in kwargs:
-            kwargs['secret_upstreams'] = kwargs['secret_upstreams'].split(",") if kwargs['secret_upstreams'] else []
-        if 'use_relay_rule_provider' in kwargs:
-            kwargs['use_relay_rule_provider'] = kwargs['use_relay_rule_provider'] in {'', 'y', 'yes', '1', 'on', 't', 'true'}
+        if "http_port" in kwargs:
+            kwargs["port"] = kwargs.pop("http_port")
+        if "trust" in kwargs or "trusted" in kwargs:
+            trusted = kwargs.pop("trust", None) or kwargs.pop("trusted", None)
+            kwargs["trusted"] = trusted in YES_OPTIONS
+        if "untrust" in kwargs or "untrusted" in kwargs:
+            untrusted = kwargs.pop("untrust", None) or kwargs.pop("untrusted", None)
+            kwargs["trusted"] = untrusted not in YES_OPTIONS
+        if "dns" in kwargs:
+            kwargs["dns"] = kwargs["dns"] in YES_OPTIONS
+        if "keep_upstream_selector" in kwargs:
+            kwargs["keep_upstream_selector"] = kwargs["keep_upstream_selector"] in YES_OPTIONS
+        if "group" in kwargs:
+            kwargs["group"] = kwargs["group"].split(",") if kwargs["group"] else []
+        if "selector" in kwargs:
+            kwargs["selector"] = kwargs["selector"].split(",") if kwargs["selector"] else []
+        if "upstream" in kwargs:
+            kwargs["upstream"] = kwargs["upstream"].split(",") if kwargs["upstream"] else ["default"]
+        if "use_relay_rule_provider" in kwargs:
+            kwargs["use_relay_rule_provider"] = kwargs["use_relay_rule_provider"] in YES_OPTIONS
         return allargs
 
     @property
     def dns_addr(self):
         return f"{self.dns_listen}:{self.dns_port}"
+
 
 @dataclass(config={"arbitrary_types_allowed": True})
 class UpstreamData:
@@ -188,15 +212,15 @@ class UpstreamData:
         self.proxies = self.proxies.filter(lambda proxy: all(b not in proxy["name"] for b in PROXY_BLACKLIST))
 
         for group in self.groups:
-            group["proxies"] = [proxy_name for proxy_name in group["proxies"]
-                                if all(b not in proxy_name for b in PROXY_BLACKLIST)]
+            group["proxies"] = [
+                proxy_name for proxy_name in group["proxies"] if all(b not in proxy_name for b in PROXY_BLACKLIST)
+            ]
         self.groups = self.groups.filter(lambda group: group["proxies"])
 
 
-def retrieve(url: str, ttl=3600, mutator=None, timeout=None) -> bytes:
-    logging.info(f"Retrieving {url}")
-
+def retrieve(url: str, ttl=3600, postprocesser=None, timeout=None) -> bytes:
     save_path = "./cache/" + sha1(url.encode()).hexdigest()
+    logging.info(f"Retrieving {url}, cache {save_path}")
 
     if os.path.exists(save_path):
         now = time.time()
@@ -212,12 +236,31 @@ def retrieve(url: str, ttl=3600, mutator=None, timeout=None) -> bytes:
         with open(url[7:], "rb") as f:
             content = f.read()
     else:
-        resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=timeout)
+        resp = requests.get(
+            url,
+            headers={
+                "User-Agent": USER_AGENT,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
+                "Accept-Language": "zh-CN,zh;q=0.9",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Sec-Fetch-User": "?1",
+                "Upgrade-Insecure-Requests": "1",
+                "sec-ch-ua": '"Google Chrome";v="117", "Not;A=Brand";v="8", "Chromium";v="117"',
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": '"Windows"',
+            },
+            timeout=timeout,
+        )
         if not resp.ok:
             raise Exception("Failed to retrieve upstream")
         content = resp.content
-    if mutator:
-        content = mutator(content)
+
+    if postprocesser:
+        content = postprocesser(content)
 
     if not DISABLE_CACHE:
         os.makedirs("./cache", exist_ok=True)
@@ -246,10 +289,10 @@ def stack_upstreams(upstreams: Iterable[UpstreamData]) -> UpstreamData:
 
     for upstream in upstreams:
         for proxy in upstream.proxies:
-            if (proxy_name := proxy['name']) in stacked_proxies:
+            if (proxy_name := proxy["name"]) in stacked_proxies:
                 # rename
                 cnt = 1
-                while (new_name := proxy["name"] + '+dup' + str(cnt)) in stacked_proxies:
+                while (new_name := proxy["name"] + "+dup" + str(cnt)) in stacked_proxies:
                     cnt += 1
                 proxy["name"] = new_name
                 for group in upstream.groups:
@@ -266,15 +309,14 @@ def stack_upstreams(upstreams: Iterable[UpstreamData]) -> UpstreamData:
 
 
 def rename_upstreams(upstreams: dict[str, UpstreamData]) -> dict[str, UpstreamData]:
-
     # check proxy name conflict
     all_proxy_names = set()
     for upstream_name, upstream in upstreams.items():
         for proxy in upstream.proxies:
-            if (proxy_name := proxy['name']) in all_proxy_names:
+            if (proxy_name := proxy["name"]) in all_proxy_names:
                 # rename
                 cnt = 1
-                while (new_name := proxy["name"] + '+' + upstream_name) in all_proxy_names:
+                while (new_name := proxy["name"] + "+" + upstream_name) in all_proxy_names:
                     cnt += 1
                 proxy["name"] = new_name
                 for group in upstream.groups:
@@ -288,7 +330,7 @@ def rename_upstreams(upstreams: dict[str, UpstreamData]) -> dict[str, UpstreamDa
             if (group_name := group["name"]) in all_group_names:
                 # rename
                 cnt = 1
-                while (new_name := group["name"] + '+' + upstream_name) in all_group_names:
+                while (new_name := group["name"] + "+" + upstream_name) in all_group_names:
                     cnt += 1
                 group["name"] = new_name
             all_group_names.add(group_name)
@@ -302,11 +344,12 @@ def generate(config: Config) -> Dict:
     if config.mode != Mode.PROXY and not config.eth:
         raise Exception("Need eth")
 
-    if not config.upstreams:
+    if not config.all_upstream:
         raise Exception("Need upstreams")
 
     if config.mode != Mode.PROXY:
-        config.dns = True
+        if config.dns is None:
+            config.dns = True
         config.trusted = True
 
     # set ports
@@ -333,21 +376,26 @@ def generate(config: Config) -> Dict:
         instance["allow-lan"] = True
         instance["bind-address"] = "*"
         instance["external-controller"] = f"127.0.0.1:{config.controller_port}"
+        if config.secret is not None:
+            raise Exception("Cannot set secret in trusted mode")
         instance["secret"] = ""
     else:
         instance["allow-lan"] = False
         instance["bind-address"] = "127.0.0.1"
         instance["external-controller"] = f"127.0.0.1:{config.controller_port}"
-        instance["secret"] = config.secret if config.secret is not None else ''.join(choices(string.ascii_letters + string.digits, k=32))
+        instance["secret"] = config.secret if config.secret is not None else random_str()
 
     if config.dns:
         instance["dns"]["enable"] = True
         instance["dns"]["listen"] = f"0.0.0.0:{config.dns_port}" if config.mode == Mode.REDIR else config.dns_addr
         instance["dns"]["enhanced-mode"] = "fake-ip"
         if config.mode != Mode.PROXY:
-            instance["dns"]["nameserver"].append(f"dhcp://{config.eth}")
+            dhcpdns = f"dhcp://{config.eth}"
+            instance["dns"]["nameserver"].append(dhcpdns)
+            instance["dns"]["nameserver-policy"]["+.zju.edu.cn"] = dhcpdns
     else:
         del instance["dns"]
+        instance["tun"]["dns-hijack"] = []
 
     if config.mode == Mode.TUN:
         instance["tun"]["enable"] = True
@@ -355,7 +403,7 @@ def generate(config: Config) -> Dict:
         del instance["tun"]
 
     def _retrieve(key, upstream: UpstreamSpec):
-        if not upstream.enabled and key not in config.secret_upstreams and not any(tag in config.secret_upstreams for tag in upstream.tags):
+        if all(tag not in config.upstream for tag in upstream.tags):
             return None
         try:
             n_urls = len(upstream.urls)
@@ -374,10 +422,10 @@ def generate(config: Config) -> Dict:
 
     # with ThreadPool(processes=min(os.cpu_count() or 4, len(config.upstreams))) as pool:
     #     udatas = pool.map(lambda u: _retrieve(u[0], u[1]), config.upstreams.items())
-    udatas = [_retrieve(u[0], u[1]) for u in config.upstreams.items()]
+    udatas = [_retrieve(u[0], u[1]) for u in config.all_upstream.items()]
 
     upstream_datas: dict[str, UpstreamData] = {}
-    for key, udata in zip(config.upstreams.keys(), udatas):
+    for key, udata in zip(config.all_upstream.keys(), udatas):
         if udata is None or len(udata.proxies) == 0:
             continue
         upstream_datas[key] = udata
@@ -387,7 +435,7 @@ def generate(config: Config) -> Dict:
     instance["proxies"] = [proxy for ud in upstream_datas.values() for proxy in ud.proxies]
     instance_proxies = DictList(instance["proxies"])
 
-    proxy_groups = []
+    groups = []
 
     # all proxies
     all_proxies = {
@@ -398,9 +446,9 @@ def generate(config: Config) -> Dict:
         "interval": 300,
         "tolerance": 100,
     }
-    proxy_groups.append(all_proxies)
+    groups.append(all_proxies)
 
-    if 'cn' in config.custom_groups:
+    if "cn" in config.group:
         all_proxies_cn = {
             "name": "all-cn",
             "type": "url-test",
@@ -410,9 +458,9 @@ def generate(config: Config) -> Dict:
             "tolerance": 100,
         }
         if all_proxies_cn["proxies"]:
-            proxy_groups.append(all_proxies_cn)
+            groups.append(all_proxies_cn)
 
-    if 'oversea' in config.custom_groups:
+    if "oversea" in config.group:
         all_proxies_oversea = {
             "name": "all-oversea",
             "type": "url-test",
@@ -422,9 +470,9 @@ def generate(config: Config) -> Dict:
             "tolerance": 100,
         }
         if all_proxies_oversea["proxies"]:
-            proxy_groups.append(all_proxies_oversea)
+            groups.append(all_proxies_oversea)
 
-    if 'udp' in config.custom_groups:
+    if "udp" in config.group:
         all_proxies_udp = {
             "name": "all-udp",
             "type": "url-test",
@@ -434,9 +482,9 @@ def generate(config: Config) -> Dict:
             "tolerance": 100,
         }
         if all_proxies_udp["proxies"]:
-            proxy_groups.append(all_proxies_udp)
+            groups.append(all_proxies_udp)
 
-    # if 'udp-oversea' in config.custom_groups:
+    # if 'udp-oversea' in config.group:
     #     all_proxies_udp_oversea = {
     #         "name": "all-udp-oversea",
     #         "type": "url-test",
@@ -458,9 +506,9 @@ def generate(config: Config) -> Dict:
             "interval": 300,
             "tolerance": 100,
         }
-        proxy_groups.append(upstream_all_proxies)
+        groups.append(upstream_all_proxies)
 
-        if 'cn' in config.custom_groups:
+        if "cn" in config.group:
             upstream_all_proxies_cn = {
                 "name": key + "-cn",
                 "type": "url-test",
@@ -470,9 +518,9 @@ def generate(config: Config) -> Dict:
                 "tolerance": 100,
             }
             if upstream_all_proxies_cn["proxies"]:
-                proxy_groups.append(upstream_all_proxies_cn)
+                groups.append(upstream_all_proxies_cn)
 
-        if 'oversea' in config.custom_groups:
+        if "oversea" in config.group:
             upstream_all_proxies_oversea = {
                 "name": key + "-oversea",
                 "type": "url-test",
@@ -482,9 +530,9 @@ def generate(config: Config) -> Dict:
                 "tolerance": 100,
             }
             if upstream_all_proxies_oversea["proxies"]:
-                proxy_groups.append(upstream_all_proxies_oversea)
+                groups.append(upstream_all_proxies_oversea)
 
-        if 'udp' in config.custom_groups:
+        if "udp" in config.group:
             upstream_all_proxies_udp = {
                 "name": key + "-udp",
                 "type": "url-test",
@@ -494,9 +542,9 @@ def generate(config: Config) -> Dict:
                 "tolerance": 100,
             }
             if upstream_all_proxies_udp["proxies"]:
-                proxy_groups.append(upstream_all_proxies_udp)
+                groups.append(upstream_all_proxies_udp)
 
-        # if 'udp-oversea' in config.custom_groups:
+        # if 'udp-oversea' in config.group:
         #     upstream_all_proxies_udp_oversea = {
         #         "name": key + "-udp-oversea",
         #         "type": "url-test",
@@ -508,7 +556,7 @@ def generate(config: Config) -> Dict:
         #     if upstream_all_proxies_udp_oversea["proxies"]:
         #         proxy_groups.append(upstream_all_proxies_udp_oversea)
 
-        if config.keep_upstream_chains:
+        if config.keep_upstream_selector:
             for group in ud.groups:
                 if group["type"] != "url-test":
                     continue
@@ -519,26 +567,23 @@ def generate(config: Config) -> Dict:
                 group = group.copy()
 
                 group["name"] = key + "-" + group["name"]
-                proxy_groups.append(group)
+                groups.append(group)
 
-    chain_groups = []
+    chains = []
 
-    for custom_chain in PRESET_CHAINS + config.custom_chains:
-        if custom_chain == "FALLBACK":
-            chain_groups.append({
-                "name": "FALLBACK",
-                "type": "select",
-                "proxies": ["PROXY", "DIRECT"]
-            })
+    for selector in PRESET_CHAINS + config.selector:
+        if selector == "FALLBACK":
+            chains.append({"name": "FALLBACK", "type": "select", "proxies": ["PROXY", "DIRECT"]})
             continue
-        chain_group = {
-            "name": custom_chain,
-            "type": "select",
-            "proxies": (["PROXY"] if custom_chain != "PROXY" else []) + ["DIRECT"] + [pg["name"] for pg in proxy_groups]
-        }
-        chain_groups.append(chain_group)
+        chains.append(
+            {
+                "name": selector,
+                "type": "select",
+                "proxies": (["PROXY"] if selector != "PROXY" else []) + [pg["name"] for pg in groups] + ["DIRECT"],
+            }
+        )
 
-    instance["proxy-groups"] = chain_groups + proxy_groups
+    instance["proxy-groups"] = chains + groups
 
     return instance
 
@@ -552,22 +597,24 @@ def convert_raw_list_to_rule_provider(raw_list: bytes) -> bytes:
         else:
             rules.append(b"  - " + l)
     for i in range(len(rules)):
-        if rules[i].startswith(b'  - '):
+        if rules[i].startswith(b"  - "):
             rules.insert(i, b"payload:")
             break
     return b"\n".join(rules) + b"\n"
 
 
 def test_parse_smoke():
-    config = Config({
-        "mode": "tun",
-        "eth": "aaa",
-        "custom_groups": "cn,oversea,udp-oversea",
-        "port": '12345',
-        "dns": '',
-        "keep_upstream_chains": 1,
-        "secret_upstreams": "bbb",
-    })
+    config = Config(
+        {
+            "mode": "tun",
+            "eth": "aaa",
+            "group": "cn,oversea,udp-oversea",
+            "port": "12345",
+            "dns": "",
+            "keep_upstream_selector": 1,
+            "upstream": "bbb",
+        }
+    )
     assert config.mode == Mode.TUN
     assert config.eth == "aaa"
     assert config.dns == True

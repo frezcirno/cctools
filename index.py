@@ -28,9 +28,9 @@ def generate_yaml():
     args = request.values.to_dict()
     if os.path.exists("upstreams.yaml"):
         with open("upstreams.yaml") as f:
-            args["upstreams"] = yaml.safe_load(f)
+            args["all_upstream"] = yaml.safe_load(f)
     elif env := os.environ.get("UPSTREAMS"):
-        args["upstreams"] = yaml.safe_load(base64.b64decode(env))
+        args["all_upstream"] = yaml.safe_load(base64.b64decode(env))
     else:
         return "No upstreams", 500
     client_ip = request.headers.get("X-Real-IP", request.remote_addr)
