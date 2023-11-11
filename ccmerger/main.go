@@ -116,6 +116,9 @@ func handle_config(w http.ResponseWriter, r *http.Request) {
 
 	cfg := Config{}
 	cfg.Mode = Mode(query.Get("mode"))
+	if cfg.Mode == "" {
+		cfg.Mode = PROXY
+	}
 	cfg.Trusted, _ = GetBool("trusted")
 	if cfg.Port, err = GetNumber("port"); err != nil {
 		goto die
@@ -151,6 +154,7 @@ func handle_config(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg.Selector, _ = GetArray("selector")
 	cfg.Upstream, _ = GetArray("upstream")
+	cfg.NoRuleProviders, _ = GetBool("no_rule_providers")
 
 	if err = cfg.Validate(); err != nil {
 		goto die

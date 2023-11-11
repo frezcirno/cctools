@@ -148,11 +148,12 @@ func (dl *DictList) values() (res []YamlStrDict) {
 }
 
 type UpstreamSpec struct {
-	Name    string   `yaml:"name"`
-	Urls    []string `yaml:"urls"`
-	Ttl     int      `yaml:"ttl"`
-	Enabled bool     `yaml:"enabled"`
-	Tags    []string `yaml:"tags"`
+	Name          string   `yaml:"name"`
+	Urls          []string `yaml:"urls"`
+	Ttl           int      `yaml:"ttl"`
+	Enabled       bool     `yaml:"enabled"`
+	Tags          []string `yaml:"tags"`
+	UseCacheOnErr bool     `yaml:"use-cache-on-err"`
 }
 
 func (us *UpstreamSpec) tags() []string {
@@ -297,22 +298,38 @@ func random_str(length int) string {
 	return string(b)
 }
 
-func retieve(url *url.URL, ttl time.Duration, postprocesser func([]byte) []byte, timeout int) ([]byte, error) {
-	save_path := "./cache/" + fmt.Sprintf("%x", sha1.Sum([]byte(url.String())))
+func load_file(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		log.Printf("Failed to open cache: %v", err)
+		return nil, err
+	}
+	defer f.Close()
+
+	content, err := io.ReadAll(f)
+	if err != nil {
+		return nil, err
+	}
+
+	return content, nil
+}
+
+func download(url *url.URL, cache_key string, ttl time.Duration, postprocesser func([]byte) []byte, timeout int, use_cache_on_err bool) ([]byte, error) {
+	if cache_key == "" {
+		cache_key = fmt.Sprintf("%x", sha1.Sum([]byte(url.String())))
+	}
+	save_path := "./cache/" + cache_key
 	log.Printf("Retrieving %s, cache %s", url, save_path)
+	cache_ok := false
 
 	if fi, err := os.Stat(save_path); err == nil {
+		cache_ok = true
 		now := time.Now()
 		ctime := fi.ModTime()
 		if ctime.After(now) {
 			log.Printf("Clock changed, ignoring cache")
 		} else if now.Sub(ctime) < ttl {
-			if f, err := os.Open(save_path); err == nil {
-				defer f.Close()
-				if content, err := io.ReadAll(f); err == nil {
-					return content, nil
-				}
-			}
+			return load_file(save_path)
 		}
 	}
 
@@ -358,6 +375,9 @@ func retieve(url *url.URL, ttl time.Duration, postprocesser func([]byte) []byte,
 
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
+			if cache_ok && use_cache_on_err {
+				return load_file(save_path)
+			}
 			log.Printf("Failed to retrieve upstream: %v", err)
 			return nil, err
 		}
@@ -384,8 +404,8 @@ func retieve(url *url.URL, ttl time.Duration, postprocesser func([]byte) []byte,
 	return content, nil
 }
 
-func retrieve_upstream(upstream *url.URL, ttl int, timeout int) (*UpstreamData, error) {
-	content, err := retieve(upstream, time.Duration(ttl)*time.Second, nil, timeout)
+func download_upstream(upstream *url.URL, upstream_name string, ttl int, timeout int, use_cache_on_err bool) (*UpstreamData, error) {
+	content, err := download(upstream, upstream_name, time.Duration(ttl)*time.Second, nil, timeout, use_cache_on_err)
 	if err != nil {
 		log.Printf("Failed to retrieve upstream: %v", err)
 		return nil, err
@@ -492,6 +512,7 @@ type Config struct {
 	AllUpstream          map[string]UpstreamSpec
 	Selector             []string
 	Upstream             []string
+	NoRuleProviders      bool
 }
 
 func (c *Config) Validate() error {
@@ -532,6 +553,9 @@ func (c *Config) upstreams() []UpstreamSpec {
 	// select all upstreams matching tags
 	selected := []UpstreamSpec{}
 	userTags := c.Upstream
+	if len(userTags) == 0 {
+		userTags = []string{"default"}
+	}
 	for _, upstream := range c.AllUpstream {
 		matched := false
 		for _, userTag := range userTags {
@@ -553,6 +577,24 @@ func (c *Config) upstreams() []UpstreamSpec {
 func (c *Config) trusted() bool {
 	// in trusted mode, we bind to all interfaces and allow LAN, and disable secret
 	return c.Mode != PROXY || c.Trusted
+}
+
+func (c *Config) controllerPort() int {
+	if c.ControllerPort != 0 {
+		return c.ControllerPort
+	}
+	return DEFAULT_CONTROLLER_PORT
+}
+
+func (c *Config) secret() string {
+	if c.Secret != "" {
+		return c.Secret
+	}
+	if c.trusted() {
+		return ""
+	}
+	c.Secret = random_str(16)
+	return c.Secret
 }
 
 func (c *Config) dns() bool {
@@ -632,18 +674,12 @@ func (c *Config) generate() (YamlStrDict, error) {
 	if c.trusted() {
 		instance["allow-lan"] = true
 		instance["bind-address"] = "*"
-		instance["external-controller"] = fmt.Sprintf("127.0.0.1:%d", c.ControllerPort)
-		instance["secret"] = ""
 	} else {
 		instance["allow-lan"] = false
 		instance["bind-address"] = "127.0.0.1"
-		instance["external-controller"] = fmt.Sprintf("127.0.0.1:%d", c.ControllerPort)
-		if c.Secret != "" {
-			instance["secret"] = c.Secret
-		} else {
-			instance["secret"] = random_str(16)
-		}
 	}
+	instance["external-controller"] = fmt.Sprintf("127.0.0.1:%d", c.controllerPort())
+	instance["secret"] = c.secret()
 
 	if c.dns() {
 		dns := instance["dns"].(map[interface{}]interface{})
@@ -678,12 +714,12 @@ func (c *Config) generate() (YamlStrDict, error) {
 		_copy := upstream
 		go func() {
 			uds := []UpstreamData{}
-			for _, _url := range _copy.Urls {
+			for idx, _url := range _copy.Urls {
 				u, err := url.Parse(_url)
 				if err != nil {
 					continue
 				}
-				ud, err := retrieve_upstream(u, _copy.Ttl, 10)
+				ud, err := download_upstream(u, fmt.Sprintf("upstream-%s-%d.yaml", _copy.Name, idx), _copy.Ttl, 10, _copy.UseCacheOnErr)
 				if err != nil {
 					continue
 				}
@@ -869,6 +905,87 @@ func (c *Config) generate() (YamlStrDict, error) {
 	}
 
 	instance["proxy-groups"] = append(instance_selectors, instance_groups...)
+
+	if c.NoRuleProviders {
+		rule_providers := instance["rule-providers"].(map[interface{}]interface{})
+		delete(instance, "rule-providers")
+
+		rule_provider_map := map[string]YamlStrDict{}
+
+		for rule_set_name, rule_provider := range rule_providers {
+			rule_set_name := rule_set_name.(string)
+			rule_provider := rule_provider.(map[interface{}]interface{})
+
+			behavior := rule_provider["behavior"].(string)
+			url, err := url.Parse(rule_provider["url"].(string))
+			if err != nil {
+				log.Printf("Failed to parse rule provider url: %v", err)
+				return nil, err
+			}
+
+			content, err := download(url, fmt.Sprintf("rule-%s.yaml", rule_set_name), 24*time.Hour, nil, 10, true)
+			if err != nil {
+				log.Printf("Failed to retrieve rule provider: %v", err)
+				return nil, err
+			}
+
+			if err := yaml.Unmarshal(content, &rule_provider); err != nil {
+				log.Printf("Failed to parse rule provider: %v", err)
+				return nil, err
+			}
+
+			rule_provider_map[rule_set_name] = YamlStrDict{
+				"name":     rule_set_name,
+				"behavior": behavior,
+				"patterns": rule_provider["payload"],
+			}
+		}
+
+		rules := []string{}
+		for _, rule := range instance["rules"].([]interface{}) {
+			rule := rule.(string)
+			rule_segs := strings.Split(rule, ",")
+
+			if len(rule_segs) < 2 {
+				continue
+			}
+			if rule_segs[0] != "RULE-SET" {
+				rules = append(rules, rule)
+				continue
+			}
+
+			rule_set_name := rule_segs[1]
+			rule_provider, ok := rule_provider_map[rule_set_name]
+			if !ok {
+				continue
+			}
+
+			rule_action := rule_segs[2]
+			behavior := rule_provider["behavior"].(string)
+
+			for _, pattern := range rule_provider["patterns"].([]interface{}) {
+				pattern := pattern.(string)
+				new_rule := ""
+				if behavior == "domain" {
+					new_rule = fmt.Sprintf("DOMAIN,%s,%s", pattern, rule_action)
+				} else if behavior == "ipcidr" {
+					new_rule = fmt.Sprintf("IP-CIDR,%s,%s", pattern, rule_action)
+				} else if behavior == "classical" {
+					if strings.Contains(pattern, ",no-resolve") {
+						pattern = strings.Replace(pattern, ",no-resolve", "", 1)
+						new_rule = fmt.Sprintf("%s,%s,no-resolve", pattern, rule_action)
+					} else {
+						new_rule = fmt.Sprintf("%s,%s", pattern, rule_action)
+					}
+				} else {
+					continue
+				}
+				rules = append(rules, new_rule)
+			}
+
+		}
+		instance["rules"] = rules
+	}
 
 	return instance, nil
 }
