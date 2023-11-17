@@ -14,6 +14,27 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+var token = os.Getenv("TOKEN")
+
+var upstreams_yaml = []byte{}
+
+func init() {
+	f, err := os.Open("./upstreams.yaml")
+	if err != nil {
+		log.Panicf("Failed to open upstreams.yaml: %v\n", err)
+		return
+	}
+	defer f.Close()
+
+	src, err := io.ReadAll(f)
+	if err != nil {
+		log.Panicf("Failed to read upstreams.yaml: %v\n", err)
+		return
+	}
+
+	upstreams_yaml = src
+}
+
 func logRequest(r *http.Request) {
 	requestDump, err := httputil.DumpRequest(r, true)
 	if err != nil {
@@ -43,19 +64,9 @@ var NO_ANSWER = map[string]struct{}{
 }
 
 func loadAllUpstreams() (map[string]UpstreamSpec, error) {
-	f, err := os.Open("./upstreams.yaml")
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	src, err := io.ReadAll(f)
-	if err != nil {
-		return nil, err
-	}
-
 	tpl := map[string]UpstreamSpec{}
-	err = yaml.Unmarshal(src, &tpl)
+
+	err := yaml.Unmarshal(upstreams_yaml, &tpl)
 	if err != nil {
 		return nil, err
 	}
@@ -94,6 +105,9 @@ func handle_config(w http.ResponseWriter, r *http.Request) {
 	}
 
 	GetBool := func(key string) (bool, error) {
+		if !query.Has(key) {
+			return false, nil
+		}
 		str := strings.ToLower(query.Get(key))
 		_, ok := YES_ANSWER[str]
 		return ok, nil
@@ -111,7 +125,7 @@ func handle_config(w http.ResponseWriter, r *http.Request) {
 		if _, ok := NO_ANSWER[str]; ok {
 			return NO, nil
 		}
-		return NA, fmt.Errorf("Invalid option: %s", str)
+		return NA, fmt.Errorf("invalid option: %s", str)
 	}
 
 	cfg := Config{}
@@ -155,6 +169,7 @@ func handle_config(w http.ResponseWriter, r *http.Request) {
 	cfg.Selector, _ = GetArray("selector")
 	cfg.Upstream, _ = GetArray("upstream")
 	cfg.NoRuleProviders, _ = GetBool("no_rule_providers")
+	cfg.Platform = query.Get("platform")
 
 	if err = cfg.Validate(); err != nil {
 		goto die
@@ -183,11 +198,40 @@ except:
 	http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 }
 
+func upload_upstreams(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("token") != token {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	if r.Method == "GET" {
+		w.Header().Set("Content-Type", "application/x-yaml")
+		w.Write(upstreams_yaml)
+		return
+	}
+
+	// 上传文件
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		log.Printf("Failed to upload file: %v\n", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	// 保存到本地
+	if _, err := file.Read(upstreams_yaml); err != nil {
+		log.Printf("Failed to save file: %v\n", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+}
+
 func main() {
 	// 设置日志前缀和输出位置
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 
 	http.HandleFunc("/clash/config.yaml", handle_config)
+	http.HandleFunc("/upstreams.yaml", upload_upstreams)
 
 	log.Printf("Starting server on port 9000...\n")
 	if err := http.ListenAndServe(":9000", nil); err != nil {

@@ -374,19 +374,22 @@ func download(url *url.URL, cache_key string, ttl time.Duration, postprocesser f
 		}
 
 		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
+		if err != nil || resp.StatusCode != 200 {
 			if cache_ok && use_cache_on_err {
 				return load_file(save_path)
+			}
+			if err == nil {
+				err = fmt.Errorf("status code %d", resp.StatusCode)
 			}
 			log.Printf("Failed to retrieve upstream: %v", err)
 			return nil, err
 		}
-		defer resp.Body.Close()
 
 		content, err = io.ReadAll(resp.Body)
 		if err != nil {
 			return nil, err
 		}
+		defer resp.Body.Close()
 	}
 
 	if postprocesser != nil {
@@ -513,6 +516,7 @@ type Config struct {
 	Selector             []string
 	Upstream             []string
 	NoRuleProviders      bool
+	Platform             string
 }
 
 func (c *Config) Validate() error {
@@ -698,6 +702,10 @@ func (c *Config) generate() (YamlStrDict, error) {
 		tun["enable"] = true
 		if !c.dns() {
 			tun["dns-hijack"] = []string{}
+		}
+		if c.Platform == "windows" {
+			tun["stack"] = "gvisor"
+			tun["auto-redir"] = false
 		}
 	}
 
@@ -982,7 +990,6 @@ func (c *Config) generate() (YamlStrDict, error) {
 				}
 				rules = append(rules, new_rule)
 			}
-
 		}
 		instance["rules"] = rules
 	}
