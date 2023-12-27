@@ -422,12 +422,14 @@ func download_upstream(upstream *url.URL, upstream_name string, ttl int, timeout
 
 	_proxies, ok := obj["proxies"].([]interface{})
 	if !ok {
+		err := fmt.Errorf("proxies not found")
 		log.Printf("Failed to parse upstream: %v", err)
 		return nil, err
 	}
 	proxies := NewDictList(_proxies)
 	_groups, ok := obj["proxy-groups"].([]interface{})
 	if !ok {
+		err := fmt.Errorf("proxy-groups not found")
 		log.Printf("Failed to parse upstream: %v", err)
 		return nil, err
 	}

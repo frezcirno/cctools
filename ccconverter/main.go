@@ -43,30 +43,28 @@ func convertRawListToRuleProvider(rawList []byte) []byte {
 	return bytes.Join(rules, []byte("\n"))
 }
 
-func proxy_request(w http.ResponseWriter, r *http.Request) {
-	logRequest(r)
+func main() {
+	// 设置日志前缀和输出位置
+	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 
-	upstream := r.URL.Query().Get("url")
-	if upstream == "" {
-		// return 404
-		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte("404 Not Found"))
-		return
-	}
-
-	upstreamURL, err := url.Parse(upstream)
-	if err != nil {
-		// return 400
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte("400 Bad Request"))
-		return
-	}
-
-	log.Printf("upstreamURL: %s", upstreamURL)
-
-	proxy := httputil.NewSingleHostReverseProxy(upstreamURL)
+	proxy := httputil.NewSingleHostReverseProxy(&url.URL{
+		Scheme: "http",
+		Host:   "baidu.com",
+	})
 
 	proxy.Director = func(req *http.Request) {
+		logRequest(req)
+
+		upstream := req.URL.Query().Get("url")
+		if upstream == "" {
+			return
+		}
+
+		upstreamURL, err := url.Parse(upstream)
+		if err != nil {
+			return
+		}
+
 		req.URL = upstreamURL
 		req.Host = upstreamURL.Host
 
@@ -76,6 +74,10 @@ func proxy_request(w http.ResponseWriter, r *http.Request) {
 	}
 
 	proxy.ModifyResponse = func(resp *http.Response) error {
+		if resp.StatusCode != http.StatusOK {
+			return nil
+		}
+
 		buf := new(bytes.Buffer)
 		buf.ReadFrom(resp.Body)
 
@@ -89,15 +91,8 @@ func proxy_request(w http.ResponseWriter, r *http.Request) {
 
 		return nil
 	}
-	proxy.ServeHTTP(w, r)
-}
 
-func main() {
-	// 设置日志前缀和输出位置
-	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
-
-	// 启动HTTP服务器
-	http.HandleFunc("/", proxy_request)
+	http.Handle("/", proxy)
 
 	log.Printf("Starting server on port 9000...\n")
 	if err := http.ListenAndServe(":9000", nil); err != nil {

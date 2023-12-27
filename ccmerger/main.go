@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -16,23 +17,46 @@ import (
 
 var token = os.Getenv("TOKEN")
 
-var upstreams_yaml = []byte{}
+var fake_fs = map[string][]byte{}
+
+func fake_store(fspath string, data []byte) {
+	key := resolvePath(fspath)
+	fake_fs[key] = data
+}
+
+func fake_load(fspath string) []byte {
+	key := resolvePath(fspath)
+	return fake_fs[key]
+}
+
+func resolvePath(fspath string) string {
+	// Convert the relative path to an absolute path
+	absPath, err := filepath.Abs(fspath)
+	if err != nil {
+		// Handle error, for example, log it or return a default value
+		fmt.Println("Error resolving path:", err)
+		return fspath
+	}
+	return absPath
+}
 
 func init() {
-	f, err := os.Open("./upstreams.yaml")
-	if err != nil {
-		log.Panicf("Failed to open upstreams.yaml: %v\n", err)
-		return
-	}
-	defer f.Close()
+	for _, fp := range []string{"./upstreams.yaml", "./template.yaml"} {
+		f, err := os.Open(fp)
+		if err != nil {
+			log.Panicf("Failed to open upstreams.yaml: %v\n", err)
+			return
+		}
+		defer f.Close()
 
-	src, err := io.ReadAll(f)
-	if err != nil {
-		log.Panicf("Failed to read upstreams.yaml: %v\n", err)
-		return
-	}
+		src, err := io.ReadAll(f)
+		if err != nil {
+			log.Panicf("Failed to read upstreams.yaml: %v\n", err)
+			return
+		}
 
-	upstreams_yaml = src
+		fake_store(fp, src)
+	}
 }
 
 func logRequest(r *http.Request) {
@@ -66,6 +90,7 @@ var NO_ANSWER = map[string]struct{}{
 func loadAllUpstreams() (map[string]UpstreamSpec, error) {
 	tpl := map[string]UpstreamSpec{}
 
+	upstreams_yaml := fake_load("./upstreams.yaml")
 	err := yaml.Unmarshal(upstreams_yaml, &tpl)
 	if err != nil {
 		return nil, err
@@ -198,20 +223,22 @@ except:
 	http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 }
 
-func upload_upstreams(w http.ResponseWriter, r *http.Request) {
+func handle_file_op(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("token") != token {
-		http.Error(w, "Forbidden", http.StatusForbidden)
+		http.Error(w, "", http.StatusForbidden)
 		return
 	}
 
+	path := r.URL.Path[1:]
 	if r.Method == "GET" {
+		target_file := fake_load(path)
 		w.Header().Set("Content-Type", "application/x-yaml")
-		w.Write(upstreams_yaml)
+		w.Write(target_file)
 		return
 	}
 
 	// 上传文件
-	file, _, err := r.FormFile("file")
+	formfile, _, err := r.FormFile("file")
 	if err != nil {
 		log.Printf("Failed to upload file: %v\n", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -219,11 +246,13 @@ func upload_upstreams(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 保存到本地
-	if _, err := file.Read(upstreams_yaml); err != nil {
+	data := []byte{}
+	if _, err := formfile.Read(data); err != nil {
 		log.Printf("Failed to save file: %v\n", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
+	fake_store(path, data)
 }
 
 func main() {
@@ -231,7 +260,8 @@ func main() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 
 	http.HandleFunc("/clash/config.yaml", handle_config)
-	http.HandleFunc("/upstreams.yaml", upload_upstreams)
+	http.HandleFunc("/upstreams.yaml", handle_file_op)
+	http.HandleFunc("/template.yaml", handle_file_op)
 
 	log.Printf("Starting server on port 9000...\n")
 	if err := http.ListenAndServe(":9000", nil); err != nil {
