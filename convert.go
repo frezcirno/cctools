@@ -4,21 +4,10 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"time"
 )
-
-func logRequest(r *http.Request) {
-	requestDump, err := httputil.DumpRequest(r, true)
-	if err != nil {
-		log.Printf("Failed to dump request: %v\n", err)
-	} else {
-		log.Printf("%s Request: %s\n", time.Now().Format("2006-01-02 15:04:05"), string(requestDump))
-	}
-}
 
 func convertRawListToRuleProvider(rawList []byte) []byte {
 	rules := make([][]byte, 0)
@@ -43,16 +32,13 @@ func convertRawListToRuleProvider(rawList []byte) []byte {
 	return bytes.Join(rules, []byte("\n"))
 }
 
-func main() {
-	// 设置日志前缀和输出位置
-	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
-
-	proxy := httputil.NewSingleHostReverseProxy(&url.URL{
+func makeProxy() *httputil.ReverseProxy {
+	revProxy := httputil.NewSingleHostReverseProxy(&url.URL{
 		Scheme: "http",
 		Host:   "baidu.com",
 	})
 
-	proxy.Director = func(req *http.Request) {
+	revProxy.Director = func(req *http.Request) {
 		logRequest(req)
 
 		upstream := req.URL.Query().Get("url")
@@ -73,7 +59,7 @@ func main() {
 		req.Header["Accept-Encoding"] = nil
 	}
 
-	proxy.ModifyResponse = func(resp *http.Response) error {
+	revProxy.ModifyResponse = func(resp *http.Response) error {
 		if resp.StatusCode != http.StatusOK {
 			return nil
 		}
@@ -92,10 +78,5 @@ func main() {
 		return nil
 	}
 
-	http.Handle("/", proxy)
-
-	log.Printf("Starting server on port 9000...\n")
-	if err := http.ListenAndServe(":9000", nil); err != nil {
-		log.Fatal(err)
-	}
+	return revProxy
 }

@@ -215,169 +215,157 @@ rule-providers:
   reject:
     type: http
     behavior: domain
-    url: "http://static-ionverioklas.test.upcdn.net/rule-reject.yaml"
-    # url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/reject.txt"
+    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/reject.txt"
     path: ./ruleset/reject.yaml
     interval: 86400
 
   icloud:
     type: http
     behavior: domain
-    url: "http://static-ionverioklas.test.upcdn.net/rule-icloud.yaml"
-    # url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/icloud.txt"
+    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/icloud.txt"
     path: ./ruleset/icloud.yaml
     interval: 86400
 
   apple:
     type: http
     behavior: domain
-    url: "http://static-ionverioklas.test.upcdn.net/rule-apple.yaml"    
-    # url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/apple.txt"
+    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/apple.txt"
     path: ./ruleset/apple.yaml
     interval: 86400
 
   google:
     type: http
     behavior: domain
-    url: "http://static-ionverioklas.test.upcdn.net/rule-google.yaml"    
-    # url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/google.txt"
+    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/google.txt"
     path: ./ruleset/google.yaml
     interval: 86400
 
   proxy:
     type: http
     behavior: domain
-    url: "http://static-ionverioklas.test.upcdn.net/rule-proxy.yaml"    
-    # url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/proxy.txt"
+    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/proxy.txt"
     path: ./ruleset/proxy.yaml
     interval: 86400
 
   direct:
     type: http
     behavior: domain
-    url: "http://static-ionverioklas.test.upcdn.net/rule-direct.yaml"    
-    # url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/direct.txt"
+    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/direct.txt"
     path: ./ruleset/direct.yaml
     interval: 86400
 
   private:
     type: http
     behavior: domain
-    url: "http://static-ionverioklas.test.upcdn.net/rule-private.yaml"    
-    # url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/private.txt"
+    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/private.txt"
     path: ./ruleset/private.yaml
     interval: 86400
 
   gfw:
     type: http
     behavior: domain
-    url: "http://static-ionverioklas.test.upcdn.net/rule-gfw.yaml"    
-    # url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/gfw.txt"
+    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/gfw.txt"
     path: ./ruleset/gfw.yaml
     interval: 86400
 
   greatfire:
     type: http
     behavior: domain
-    url: "http://static-ionverioklas.test.upcdn.net/rule-greatfire.yaml"    
-    # url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/greatfire.txt"
+    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/greatfire.txt"
     path: ./ruleset/greatfire.yaml
     interval: 86400
 
   tld-not-cn:
     type: http
     behavior: domain
-    url: "http://static-ionverioklas.test.upcdn.net/rule-tld-not-cn.yaml"    
-    # url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/tld-not-cn.txt"
+    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/tld-not-cn.txt"
     path: ./ruleset/tld-not-cn.yaml
     interval: 86400
 
   telegramcidr:
     type: http
     behavior: ipcidr
-    url: "http://static-ionverioklas.test.upcdn.net/rule-telegramcidr.yaml"    
-    # url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/telegramcidr.txt"
+    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/telegramcidr.txt"
     path: ./ruleset/telegramcidr.yaml
     interval: 86400
 
   cncidr:
     type: http
     behavior: ipcidr
-    url: "http://static-ionverioklas.test.upcdn.net/rule-cncidr.yaml"    
-    # url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/cncidr.txt"
+    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/cncidr.txt"
     path: ./ruleset/cncidr.yaml
     interval: 86400
 
   lancidr:
     type: http
     behavior: ipcidr
-    url: "http://static-ionverioklas.test.upcdn.net/rule-lancidr.yaml"    
-    # url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/lancidr.txt"
+    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/lancidr.txt"
     path: ./ruleset/lancidr.yaml
     interval: 86400
 
   applications:
     type: http
     behavior: classical
-    url: "http://static-ionverioklas.test.upcdn.net/rule-applications.yaml"    
-    # url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/applications.txt"
+    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/applications.txt"
     path: ./ruleset/applications.yaml
     interval: 86400
 
   zju_internal:
     type: http
     behavior: classical
-    url: "http://static-ionverioklas.test.upcdn.net/rule-zju_internal.yaml"    
-    # url: "https://service-hgw60j46-1257316374.hk.apigw.tencentcs.com/?url=https://jsd.cdn.zzko.cn/gh/ZJU-Rule/ZJU-Rule/Clash/ZJU.list"
+    url: "/convert?url=https://jsd.cdn.zzko.cn/gh/ZJU-Rule/ZJU-Rule/Clash/ZJU.list"
     path: ./ruleset/ZJU-Rule_ZJU.yaml
     interval: 86400
 
   scholar:
     type: http
     behavior: classical
-    url: "http://static-ionverioklas.test.upcdn.net/rule-scholar.yaml"    
-    # url: "https://service-hgw60j46-1257316374.hk.apigw.tencentcs.com/?url=https://jsd.cdn.zzko.cn/gh/ZJU-Rule/ZJU-Rule/Clash/ZJU-More-Scholar.list"
+    url: "/convert?url=https://jsd.cdn.zzko.cn/gh/ZJU-Rule/ZJU-Rule/Clash/ZJU-More-Scholar.list"
     path: ./ruleset/ZJU-Rule_ZJU-More-Scholar.yaml
     interval: 86400
 
   openai:
     type: http
     behavior: classical
-    url: "http://static-ionverioklas.test.upcdn.net/rule-openai.yaml"    
-    # url: "https://service-hgw60j46-1257316374.hk.apigw.tencentcs.com/?url=https://jsd.cdn.zzko.cn/gh/ZJU-Rule/ZJU-Rule/Clash/Ruleset/OpenAi.list"
+    url: "/convert?url=https://jsd.cdn.zzko.cn/gh/ZJU-Rule/ZJU-Rule/Clash/Ruleset/OpenAi.list"
     path: ./ruleset/ZJU-Rule_OpenAi.yaml
     interval: 86400
 
   chatbot:
     type: http
     behavior: classical
-    url: "http://static-ionverioklas.test.upcdn.net/rule-chatbot.yaml"
-    # url: "https://service-hgw60j46-1257316374.hk.apigw.tencentcs.com/?url=https://jsd.cdn.zzko.cn/gh/ZJU-Rule/ZJU-Rule/Clash/Ruleset/ChatBot.list"
+    url: "/convert?url=https://jsd.cdn.zzko.cn/gh/ZJU-Rule/ZJU-Rule/Clash/Ruleset/ChatBot.list"
     path: ./ruleset/ZJU-Rule_ChatBot.yaml
     interval: 86400
+
+  ad_domain:
+    behavior: domain
+    interval: 86400
+    path: ./ruleset/ad-domain.yaml
+    type: http
+    url: http://s6bcxwvrz.hd-bkt.clouddn.com/ad-domain.yaml
+
+  ad_ipcidr:
+    behavior: ipcidr
+    interval: 86400
+    path: ./ruleset/ad-ip.yaml
+    type: http
+    url: http://s6bcxwvrz.hd-bkt.clouddn.com/ad-ip.yaml
 
 script:
   shortcuts:
     port22: dst_port == 22
-    # git_ssh: (host == 'github.com' or host == 'gitlab.com') and dst_port == 22
-    # git: host == 'github.com' or host == 'gitlab.com'
-    # openai_udp: host == 'openai.com' and network == 'udp'
     udp: network == 'udp'
 
 rules:
   # custom
+  - SCRIPT,port22,DIRECT
   - RULE-SET,zju_internal,DIRECT
   - RULE-SET,scholar,PROXY
-  #- SCRIPT,openai_udp,CHATBOT
   - RULE-SET,openai,CHATBOT
   - RULE-SET,chatbot,CHATBOT
-  - SCRIPT,port22,DIRECT
-  # - SCRIPT,git,GIT
-  # - PROCESS-NAME,git-remote-http,GIT
-  # - PROCESS-NAME,git-remote-http.exe,GIT
-  # - PROCESS-NAME,git-remote-https,GIT
-  # - PROCESS-NAME,git-remote-https.exe,GIT
   # - DOMAIN-KEYWORD,ipfs,IPFS
+
   # allowed safe trackers
   - DOMAIN,hd.mmstat.com,DIRECT
   - DOMAIN,h-adashx.ut.taobao.com,DIRECT
@@ -394,18 +382,30 @@ rules:
   - DOMAIN-SUFFIX,googlesyndication.com,DIRECT
   - DOMAIN-SUFFIX,googletagmanager.com,DIRECT
   - DOMAIN-SUFFIX,googletagservices.com,DIRECT
+
   # ad
   - RULE-SET,reject,REJECT
+  - RULE-SET,ad_domain,REJECT
+  - RULE-SET,ad_ipcidr,REJECT
+
   # domestic
   - RULE-SET,applications,DIRECT
   - RULE-SET,apple,DIRECT
-  - DOMAIN-SUFFIX,msftconnecttest.com,PROXY # Patch for direct list
+
+  # Patch for direct list
+  - DOMAIN-SUFFIX,msftconnecttest.com,PROXY
   - RULE-SET,private,DIRECT
-  - DOMAIN,dl.google.com,PROXY # Patch for direct list
-  - DOMAIN,dl.l.google.com,PROXY # Patch for direct list
+
+  # Patch for direct list
+  - DOMAIN,dl.google.com,PROXY
+  - DOMAIN,dl.l.google.com,PROXY
   - RULE-SET,direct,DIRECT
+
   - RULE-SET,lancidr,DIRECT
   - RULE-SET,cncidr,DIRECT
+
+  # Note: 大多数MS的地址可以直连
+  # 偶有例外在此处修改
   - DOMAIN-KEYWORD,1drv,DIRECT
   - DOMAIN-KEYWORD,microsoft,DIRECT
   - DOMAIN-SUFFIX,aadrm.com,DIRECT
@@ -483,10 +483,11 @@ rules:
   - DOMAIN-SUFFIX,yammer.com,DIRECT
   - DOMAIN-SUFFIX,yammerusercontent.com,DIRECT
   - GEOIP,CN,DIRECT
+
   # webui
   - DOMAIN,clash.razord.top,DIRECT
   - DOMAIN,yacd.haishan.me,DIRECT
-  #- DOMAIN-SUFFIX,overleaf.com,DIRECT
+
   # gfwed
   - DOMAIN-SUFFIX,googleapis.cn,PROXY
   - DOMAIN-SUFFIX,digicert.com,PROXY
