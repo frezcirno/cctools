@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"regexp"
 	"strings"
 	"time"
 
@@ -21,8 +20,6 @@ import (
 const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36"
 
 var PROXY_BLACKLIST = []string{"DIRECT", "REJECT", "GLOBAL", "✉️", "有效期", "群", "感谢", "非线路"}
-
-var REGEXP *regexp.Regexp = regexp.MustCompile(`(?i)(\b(hk|hong ?kong|tw|taiwan)\b|🇨🇳|🇭🇰|香港|台湾)`)
 
 func init() {
 	rand.Seed(time.Now().UnixNano())
@@ -682,142 +679,164 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 	for _, ud := range uds {
 		instance_proxies.update(ud.Proxies)
 	}
-	instance_proxies_keys := instance_proxies.keys()
 	c.Template["proxies"] = instance_proxies.values()
 
 	// groups
 	instance_groups := []YamlStrDict{}
 
 	key := "all"
-	if len(instance_proxies_keys) > 0 {
+
+	if len(instance_proxies) > 0 {
 		instance_groups = append(instance_groups, YamlStrDict{
 			"name":      key,
 			"type":      "url-test",
-			"proxies":   instance_proxies_keys,
+			"proxies":   instance_proxies.keys(),
 			"url":       "http://www.gstatic.com/generate_204",
 			"interval":  300,
 			"tolerance": 100,
 		})
 	}
-	if c.contains_group("cn") || c.contains_group("oversea") {
-		_p := []string{}
-		_n := []string{}
-		for _, key := range instance_proxies_keys {
-			if REGEXP.MatchString(key) {
-				_p = append(_p, key)
-			} else {
-				_n = append(_n, key)
-			}
-		}
 
-		if c.contains_group("cn") && len(_p) > 0 {
-			instance_groups = append(instance_groups, YamlStrDict{
-				"name":      fmt.Sprintf("%s-cn", key),
-				"type":      "url-test",
-				"proxies":   _p,
-				"url":       "http://www.gstatic.com/generate_204",
-				"interval":  300,
-				"tolerance": 100,
-			})
-		}
+	_cn := []string{}
+	_tw := []string{}
+	_oversea := []string{}
+	_udp := []string{}
 
-		if c.contains_group("oversea") && len(_n) > 0 {
-			instance_groups = append(instance_groups, YamlStrDict{
-				"name":      fmt.Sprintf("%s-oversea", key),
-				"type":      "url-test",
-				"proxies":   _n,
-				"url":       "http://www.gstatic.com/generate_204",
-				"interval":  300,
-				"tolerance": 100,
-			})
+	for _, proxy := range instance_proxies {
+		if isCN(proxy) {
+			_cn = append(_cn, proxy["name"].(string))
+		}
+		if isTW(proxy) {
+			_tw = append(_tw, proxy["name"].(string))
+		}
+		if isOversea(proxy) {
+			_oversea = append(_oversea, proxy["name"].(string))
+		}
+		if isUDP(proxy) {
+			_udp = append(_udp, proxy["name"].(string))
 		}
 	}
 
-	if c.contains_group("udp") {
-		_p := []string{}
-		for _, proxy := range instance_proxies {
-			if _, ok := proxy["udp"].(string); ok {
-				_p = append(_p, proxy["name"].(string))
-			}
-		}
-		if len(_p) > 0 {
-			instance_groups = append(instance_groups, YamlStrDict{
-				"name":      fmt.Sprintf("%s-udp", key),
-				"type":      "url-test",
-				"proxies":   _p,
-				"url":       "http://www.gstatic.com/generate_204",
-				"interval":  300,
-				"tolerance": 100,
-			})
-		}
+	if c.contains_group("cn") && len(_cn) > 0 {
+		instance_groups = append(instance_groups, YamlStrDict{
+			"name":      fmt.Sprintf("%s-cn", key),
+			"type":      "url-test",
+			"proxies":   _cn,
+			"url":       "http://www.gstatic.com/generate_204",
+			"interval":  300,
+			"tolerance": 100,
+		})
+	}
+
+	if c.contains_group("tw") && len(_tw) > 0 {
+		instance_groups = append(instance_groups, YamlStrDict{
+			"name":      fmt.Sprintf("%s-tw", key),
+			"type":      "url-test",
+			"proxies":   _tw,
+			"url":       "http://www.gstatic.com/generate_204",
+			"interval":  300,
+			"tolerance": 100,
+		})
+	}
+
+	if c.contains_group("oversea") && len(_oversea) > 0 {
+		instance_groups = append(instance_groups, YamlStrDict{
+			"name":      fmt.Sprintf("%s-oversea", key),
+			"type":      "url-test",
+			"proxies":   _oversea,
+			"url":       "http://www.gstatic.com/generate_204",
+			"interval":  300,
+			"tolerance": 100,
+		})
+	}
+
+	if c.contains_group("udp") && len(_udp) > 0 {
+		instance_groups = append(instance_groups, YamlStrDict{
+			"name":      fmt.Sprintf("%s-udp", key),
+			"type":      "url-test",
+			"proxies":   _udp,
+			"url":       "http://www.gstatic.com/generate_204",
+			"interval":  300,
+			"tolerance": 100,
+		})
 	}
 
 	for key, ud := range uds {
 		ud_proxies := ud.Proxies
-		ud_proxies_keys := ud.Proxies.keys()
 
-		if len(ud_proxies_keys) > 0 {
+		if len(ud.Proxies) > 0 {
 			instance_groups = append(instance_groups, YamlStrDict{
 				"name":      fmt.Sprintf("%s-all", key),
 				"type":      "url-test",
-				"proxies":   ud_proxies_keys,
+				"proxies":   ud.Proxies.keys(),
 				"url":       "http://www.gstatic.com/generate_204",
 				"interval":  300,
 				"tolerance": 100,
 			})
 		}
 
-		if c.contains_group("cn") || c.contains_group("oversea") {
-			_p := []string{}
-			_n := []string{}
-			for _, key := range ud_proxies_keys {
-				if REGEXP.MatchString(key) {
-					_p = append(_p, key)
-				} else {
-					_n = append(_n, key)
-				}
-			}
+		_cn := []string{}
+		_tw := []string{}
+		_oversea := []string{}
+		_udp := []string{}
 
-			if c.contains_group("cn") && len(_p) > 0 {
-				instance_groups = append(instance_groups, YamlStrDict{
-					"name":      fmt.Sprintf("%s-cn", key),
-					"type":      "url-test",
-					"proxies":   _p,
-					"url":       "http://www.gstatic.com/generate_204",
-					"interval":  300,
-					"tolerance": 100,
-				})
+		for _, proxy := range ud_proxies {
+			if isCN(proxy) {
+				_cn = append(_cn, proxy["name"].(string))
 			}
-
-			if c.contains_group("oversea") && len(_n) > 0 {
-				instance_groups = append(instance_groups, YamlStrDict{
-					"name":      fmt.Sprintf("%s-oversea", key),
-					"type":      "url-test",
-					"proxies":   _n,
-					"url":       "http://www.gstatic.com/generate_204",
-					"interval":  300,
-					"tolerance": 100,
-				})
+			if isTW(proxy) {
+				_tw = append(_tw, proxy["name"].(string))
+			}
+			if isOversea(proxy) {
+				_oversea = append(_oversea, proxy["name"].(string))
+			}
+			if isUDP(proxy) {
+				_udp = append(_udp, proxy["name"].(string))
 			}
 		}
 
-		if c.contains_group("udp") {
-			_p := []string{}
-			for _, proxy := range ud_proxies {
-				if _, ok := proxy["udp"].(string); ok {
-					_p = append(_p, proxy["name"].(string))
-				}
-			}
-			if len(_p) > 0 {
-				instance_groups = append(instance_groups, YamlStrDict{
-					"name":      fmt.Sprintf("%s-udp", key),
-					"type":      "url-test",
-					"proxies":   _p,
-					"url":       "http://www.gstatic.com/generate_204",
-					"interval":  300,
-					"tolerance": 100,
-				})
-			}
+		if c.contains_group("cn") && len(_cn) > 0 {
+			instance_groups = append(instance_groups, YamlStrDict{
+				"name":      fmt.Sprintf("%s-cn", key),
+				"type":      "url-test",
+				"proxies":   _cn,
+				"url":       "http://www.gstatic.com/generate_204",
+				"interval":  300,
+				"tolerance": 100,
+			})
+		}
+
+		if c.contains_group("tw") && len(_tw) > 0 {
+			instance_groups = append(instance_groups, YamlStrDict{
+				"name":      fmt.Sprintf("%s-tw", key),
+				"type":      "url-test",
+				"proxies":   _tw,
+				"url":       "http://www.gstatic.com/generate_204",
+				"interval":  300,
+				"tolerance": 100,
+			})
+		}
+
+		if c.contains_group("oversea") && len(_oversea) > 0 {
+			instance_groups = append(instance_groups, YamlStrDict{
+				"name":      fmt.Sprintf("%s-oversea", key),
+				"type":      "url-test",
+				"proxies":   _oversea,
+				"url":       "http://www.gstatic.com/generate_204",
+				"interval":  300,
+				"tolerance": 100,
+			})
+		}
+
+		if c.contains_group("udp") && len(_udp) > 0 {
+			instance_groups = append(instance_groups, YamlStrDict{
+				"name":      fmt.Sprintf("%s-udp", key),
+				"type":      "url-test",
+				"proxies":   _udp,
+				"url":       "http://www.gstatic.com/generate_204",
+				"interval":  300,
+				"tolerance": 100,
+			})
 		}
 	}
 
