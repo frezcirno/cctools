@@ -352,16 +352,17 @@ rule-providers:
     type: http
     url: http://s6bcxwvrz.hd-bkt.clouddn.com/ad-ip.yaml
 
-script:
-  shortcuts:
-    port22: dst_port == 22
-    udp: network == 'udp'
+# script:
+#   shortcuts:
+#     port22: dst_port == 22
+#     udp: network == 'udp'
 
 rules:
   # custom
-  - SCRIPT,port22,DIRECT
-  - RULE-SET,zju_internal,DIRECT
+  - DST-PORT,22,CNSITE
+  - RULE-SET,zju_internal,CNSITE
   - RULE-SET,scholar,PROXY
+  - GEOSITE,openai,CHATBOT
   - RULE-SET,openai,CHATBOT
   - RULE-SET,chatbot,CHATBOT
   # - DOMAIN-KEYWORD,ipfs,IPFS
@@ -371,21 +372,21 @@ rules:
   - DOMAIN-SUFFIX,linkedin.com,CHATBOT
 
   # allowed safe trackers
-  - DOMAIN,hd.mmstat.com,DIRECT
-  - DOMAIN,h-adashx.ut.taobao.com,DIRECT
-  - DOMAIN,graph.instagram.com,DIRECT
-  - DOMAIN,www.googleadservices.com,DIRECT
-  - DOMAIN,control.kochava.com,DIRECT
-  - DOMAIN,www.google-analytics.com,DIRECT
-  - DOMAIN,ssl.google-analytics.com,DIRECT
-  - DOMAIN,nexus.officeapps.live.com,DIRECT
-  - DOMAIN,googleads.g.doubleclick.net,DIRECT
-  - DOMAIN,e.crashlytics.com,DIRECT
-  - DOMAIN,ib.adnxs.com,DIRECT
-  - DOMAIN,safebrowsing.googleapis.com,DIRECT
-  - DOMAIN-SUFFIX,googlesyndication.com,DIRECT
-  - DOMAIN-SUFFIX,googletagmanager.com,DIRECT
-  - DOMAIN-SUFFIX,googletagservices.com,DIRECT
+  - DOMAIN,hd.mmstat.com,CNSITE
+  - DOMAIN,h-adashx.ut.taobao.com,CNSITE
+  - DOMAIN,graph.instagram.com,CNSITE
+  - DOMAIN,www.googleadservices.com,CNSITE
+  - DOMAIN,control.kochava.com,CNSITE
+  - DOMAIN,www.google-analytics.com,CNSITE
+  - DOMAIN,ssl.google-analytics.com,CNSITE
+  - DOMAIN,nexus.officeapps.live.com,CNSITE
+  - DOMAIN,googleads.g.doubleclick.net,CNSITE
+  - DOMAIN,e.crashlytics.com,CNSITE
+  - DOMAIN,ib.adnxs.com,CNSITE
+  - DOMAIN,safebrowsing.googleapis.com,CNSITE
+  - DOMAIN-SUFFIX,googlesyndication.com,CNSITE
+  - DOMAIN-SUFFIX,googletagmanager.com,CNSITE
+  - DOMAIN-SUFFIX,googletagservices.com,CNSITE
 
   # ad
   - RULE-SET,reject,REJECT
@@ -393,106 +394,106 @@ rules:
   - RULE-SET,ad_ipcidr,REJECT
 
   # domestic
-  - RULE-SET,applications,DIRECT
-  - RULE-SET,apple,DIRECT
+  - RULE-SET,applications,CNSITE
+  - RULE-SET,apple,CNSITE
 
   # private list
   - DOMAIN-SUFFIX,msftconnecttest.com,PROXY
-  - RULE-SET,private,DIRECT
+  - RULE-SET,private,CNSITE
 
   # direct list
   - DOMAIN,dl.google.com,PROXY
   - DOMAIN,dl.l.google.com,PROXY
-  - RULE-SET,direct,DIRECT
+  - RULE-SET,direct,CNSITE
 
-  - RULE-SET,lancidr,DIRECT
-  - RULE-SET,cncidr,DIRECT
+  - RULE-SET,lancidr,CNSITE
+  - RULE-SET,cncidr,CNSITE
 
   # Note: 大多数MS的地址可以直连
   # 偶有例外在此处修改
-  - DOMAIN-KEYWORD,1drv,DIRECT
-  - DOMAIN-KEYWORD,microsoft,DIRECT
-  - DOMAIN-SUFFIX,aadrm.com,DIRECT
-  - DOMAIN-SUFFIX,acompli.com,DIRECT
-  - DOMAIN-SUFFIX,acompli.net,DIRECT
-  - DOMAIN-SUFFIX,aka.ms,DIRECT
-  - DOMAIN-SUFFIX,akadns.net,DIRECT
-  - DOMAIN-SUFFIX,aspnetcdn.com,DIRECT
-  - DOMAIN-SUFFIX,assets-yammer.com,DIRECT
-  - DOMAIN-SUFFIX,azure.com,DIRECT
-  - DOMAIN-SUFFIX,azure.net,DIRECT
-  - DOMAIN-SUFFIX,azureedge.net,DIRECT
-  - DOMAIN-SUFFIX,azurerms.com,DIRECT
-  - DOMAIN-SUFFIX,bing.com,DIRECT
-  - DOMAIN-SUFFIX,cloudapp.net,DIRECT
-  - DOMAIN-SUFFIX,cloudappsecurity.com,DIRECT
-  - DOMAIN-SUFFIX,edgesuite.net,DIRECT
-  - DOMAIN-SUFFIX,gfx.ms,DIRECT
-  - DOMAIN-SUFFIX,hotmail.com,DIRECT
-  - DOMAIN-SUFFIX,live.com,DIRECT
-  - DOMAIN-SUFFIX,live.net,DIRECT
-  - DOMAIN-SUFFIX,lync.com,DIRECT
-  - DOMAIN-SUFFIX,msappproxy.net,DIRECT
-  - DOMAIN-SUFFIX,msauth.net,DIRECT
-  - DOMAIN-SUFFIX,msauthimages.net,DIRECT
-  - DOMAIN-SUFFIX,msecnd.net,DIRECT
-  - DOMAIN-SUFFIX,msedge.net,DIRECT
-  - DOMAIN-SUFFIX,msft.net,DIRECT
-  - DOMAIN-SUFFIX,msftauth.net,DIRECT
-  - DOMAIN-SUFFIX,msftauthimages.net,DIRECT
-  - DOMAIN-SUFFIX,msftidentity.com,DIRECT
-  - DOMAIN-SUFFIX,msidentity.com,DIRECT
-  - DOMAIN-SUFFIX,msn.cn,DIRECT
-  - DOMAIN-SUFFIX,msn.com,DIRECT
-  - DOMAIN-SUFFIX,msocdn.com,DIRECT
-  - DOMAIN-SUFFIX,msocsp.com,DIRECT
-  - DOMAIN-SUFFIX,mstea.ms,DIRECT
-  - DOMAIN-SUFFIX,o365weve.com,DIRECT
-  - DOMAIN-SUFFIX,oaspapps.com,DIRECT
-  - DOMAIN-SUFFIX,office.com,DIRECT
-  - DOMAIN-SUFFIX,office.net,DIRECT
-  - DOMAIN-SUFFIX,office365.com,DIRECT
-  - DOMAIN-SUFFIX,officeppe.net,DIRECT
-  - DOMAIN-SUFFIX,omniroot.com,DIRECT
-  - DOMAIN-SUFFIX,onedrive.com,DIRECT
-  - DOMAIN-SUFFIX,onenote.com,DIRECT
-  - DOMAIN-SUFFIX,onenote.net,DIRECT
-  - DOMAIN-SUFFIX,onestore.ms,DIRECT
-  - DOMAIN-SUFFIX,outlook.com,DIRECT
-  - DOMAIN-SUFFIX,outlookmobile.com,DIRECT
-  - DOMAIN-SUFFIX,phonefactor.net,DIRECT
-  - DOMAIN-SUFFIX,public-trust.com,DIRECT
-  - DOMAIN-SUFFIX,sfbassets.com,DIRECT
-  - DOMAIN-SUFFIX,sfx.ms,DIRECT
-  - DOMAIN-SUFFIX,sharepoint.com,DIRECT
-  - DOMAIN-SUFFIX,sharepointonline.com,DIRECT
-  - DOMAIN-SUFFIX,skype.com,DIRECT
-  - DOMAIN-SUFFIX,skypeassets.com,DIRECT
-  - DOMAIN-SUFFIX,skypeforbusiness.com,DIRECT
-  - DOMAIN-SUFFIX,staffhub.ms,DIRECT
-  - DOMAIN-SUFFIX,svc.ms,DIRECT
-  - DOMAIN-SUFFIX,sway-cdn.com,DIRECT
-  - DOMAIN-SUFFIX,sway-extensions.com,DIRECT
-  - DOMAIN-SUFFIX,sway.com,DIRECT
-  - DOMAIN-SUFFIX,trafficmanager.net,DIRECT
-  - DOMAIN-SUFFIX,uservoice.com,DIRECT
-  - DOMAIN-SUFFIX,virtualearth.net,DIRECT
-  - DOMAIN-SUFFIX,visualstudio.com,DIRECT
-  - DOMAIN-SUFFIX,vsassets.io,DIRECT # VS Code
-  - DOMAIN-SUFFIX,exp-tas.com,DIRECT # VS Code
-  - DOMAIN-SUFFIX,windows-ppe.net,DIRECT
-  - DOMAIN-SUFFIX,windows.com,DIRECT
-  - DOMAIN-SUFFIX,windows.net,DIRECT
-  - DOMAIN-SUFFIX,windowsazure.com,DIRECT
-  - DOMAIN-SUFFIX,windowsupdate.com,DIRECT
-  - DOMAIN-SUFFIX,wunderlist.com,DIRECT
-  - DOMAIN-SUFFIX,yammer.com,DIRECT
-  - DOMAIN-SUFFIX,yammerusercontent.com,DIRECT
-  - GEOIP,CN,DIRECT
+  - DOMAIN-KEYWORD,1drv,CNSITE
+  - DOMAIN-KEYWORD,microsoft,CNSITE
+  - DOMAIN-SUFFIX,aadrm.com,CNSITE
+  - DOMAIN-SUFFIX,acompli.com,CNSITE
+  - DOMAIN-SUFFIX,acompli.net,CNSITE
+  - DOMAIN-SUFFIX,aka.ms,CNSITE
+  - DOMAIN-SUFFIX,akadns.net,CNSITE
+  - DOMAIN-SUFFIX,aspnetcdn.com,CNSITE
+  - DOMAIN-SUFFIX,assets-yammer.com,CNSITE
+  - DOMAIN-SUFFIX,azure.com,CNSITE
+  - DOMAIN-SUFFIX,azure.net,CNSITE
+  - DOMAIN-SUFFIX,azureedge.net,CNSITE
+  - DOMAIN-SUFFIX,azurerms.com,CNSITE
+  - DOMAIN-SUFFIX,bing.com,CNSITE
+  - DOMAIN-SUFFIX,cloudapp.net,CNSITE
+  - DOMAIN-SUFFIX,cloudappsecurity.com,CNSITE
+  - DOMAIN-SUFFIX,edgesuite.net,CNSITE
+  - DOMAIN-SUFFIX,gfx.ms,CNSITE
+  - DOMAIN-SUFFIX,hotmail.com,CNSITE
+  - DOMAIN-SUFFIX,live.com,CNSITE
+  - DOMAIN-SUFFIX,live.net,CNSITE
+  - DOMAIN-SUFFIX,lync.com,CNSITE
+  - DOMAIN-SUFFIX,msappproxy.net,CNSITE
+  - DOMAIN-SUFFIX,msauth.net,CNSITE
+  - DOMAIN-SUFFIX,msauthimages.net,CNSITE
+  - DOMAIN-SUFFIX,msecnd.net,CNSITE
+  - DOMAIN-SUFFIX,msedge.net,CNSITE
+  - DOMAIN-SUFFIX,msft.net,CNSITE
+  - DOMAIN-SUFFIX,msftauth.net,CNSITE
+  - DOMAIN-SUFFIX,msftauthimages.net,CNSITE
+  - DOMAIN-SUFFIX,msftidentity.com,CNSITE
+  - DOMAIN-SUFFIX,msidentity.com,CNSITE
+  - DOMAIN-SUFFIX,msn.cn,CNSITE
+  - DOMAIN-SUFFIX,msn.com,CNSITE
+  - DOMAIN-SUFFIX,msocdn.com,CNSITE
+  - DOMAIN-SUFFIX,msocsp.com,CNSITE
+  - DOMAIN-SUFFIX,mstea.ms,CNSITE
+  - DOMAIN-SUFFIX,o365weve.com,CNSITE
+  - DOMAIN-SUFFIX,oaspapps.com,CNSITE
+  - DOMAIN-SUFFIX,office.com,CNSITE
+  - DOMAIN-SUFFIX,office.net,CNSITE
+  - DOMAIN-SUFFIX,office365.com,CNSITE
+  - DOMAIN-SUFFIX,officeppe.net,CNSITE
+  - DOMAIN-SUFFIX,omniroot.com,CNSITE
+  - DOMAIN-SUFFIX,onedrive.com,CNSITE
+  - DOMAIN-SUFFIX,onenote.com,CNSITE
+  - DOMAIN-SUFFIX,onenote.net,CNSITE
+  - DOMAIN-SUFFIX,onestore.ms,CNSITE
+  - DOMAIN-SUFFIX,outlook.com,CNSITE
+  - DOMAIN-SUFFIX,outlookmobile.com,CNSITE
+  - DOMAIN-SUFFIX,phonefactor.net,CNSITE
+  - DOMAIN-SUFFIX,public-trust.com,CNSITE
+  - DOMAIN-SUFFIX,sfbassets.com,CNSITE
+  - DOMAIN-SUFFIX,sfx.ms,CNSITE
+  - DOMAIN-SUFFIX,sharepoint.com,CNSITE
+  - DOMAIN-SUFFIX,sharepointonline.com,CNSITE
+  - DOMAIN-SUFFIX,skype.com,CNSITE
+  - DOMAIN-SUFFIX,skypeassets.com,CNSITE
+  - DOMAIN-SUFFIX,skypeforbusiness.com,CNSITE
+  - DOMAIN-SUFFIX,staffhub.ms,CNSITE
+  - DOMAIN-SUFFIX,svc.ms,CNSITE
+  - DOMAIN-SUFFIX,sway-cdn.com,CNSITE
+  - DOMAIN-SUFFIX,sway-extensions.com,CNSITE
+  - DOMAIN-SUFFIX,sway.com,CNSITE
+  - DOMAIN-SUFFIX,trafficmanager.net,CNSITE
+  - DOMAIN-SUFFIX,uservoice.com,CNSITE
+  - DOMAIN-SUFFIX,virtualearth.net,CNSITE
+  - DOMAIN-SUFFIX,visualstudio.com,CNSITE
+  - DOMAIN-SUFFIX,vsassets.io,CNSITE # VS Code
+  - DOMAIN-SUFFIX,exp-tas.com,CNSITE # VS Code
+  - DOMAIN-SUFFIX,windows-ppe.net,CNSITE
+  - DOMAIN-SUFFIX,windows.com,CNSITE
+  - DOMAIN-SUFFIX,windows.net,CNSITE
+  - DOMAIN-SUFFIX,windowsazure.com,CNSITE
+  - DOMAIN-SUFFIX,windowsupdate.com,CNSITE
+  - DOMAIN-SUFFIX,wunderlist.com,CNSITE
+  - DOMAIN-SUFFIX,yammer.com,CNSITE
+  - DOMAIN-SUFFIX,yammerusercontent.com,CNSITE
+  - GEOIP,CN,CNSITE
 
   # webui
-  - DOMAIN,clash.razord.top,DIRECT
-  - DOMAIN,yacd.haishan.me,DIRECT
+  - DOMAIN,clash.razord.top,CNSITE
+  - DOMAIN,yacd.haishan.me,CNSITE
 
   # gfwed
   - DOMAIN-SUFFIX,googleapis.cn,PROXY
@@ -526,5 +527,5 @@ rules:
   - RULE-SET,telegramcidr,PROXY
   - RULE-SET,proxy,PROXY
   # default
-  - SCRIPT,udp,UDP
+  - NETWORK,udp,UDP
   - MATCH,FALLBACK

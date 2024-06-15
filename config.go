@@ -546,30 +546,29 @@ func (c *Config) contains_group(key string) bool {
 }
 
 func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
-	presetChain := []string{"PROXY", "UDP", "FALLBACK"}
+	customChains := []string{}
 	if tpl_rules, ok := c.Template["rules"]; ok {
+		presetChains := map[string]string{
+			"DIRECT":         "DIRECT",
+			"REJECT":         "REJECT",
+			"PROXY":          "PROXY",
+			"UDP":            "UDP",
+			"FALLBACK":       "FALLBACK",
+			"CNSITE":         "CNSITE",
+		}
 		for _, rule := range tpl_rules.([]interface{}) {
 			rulesegs := strings.Split(rule.(string), ",")
 			if len(rulesegs) >= 3 {
 				chain := rulesegs[2]
-				if chain != "DIRECT" && chain != "REJECT" {
-					exists := false
-					for _, preset := range presetChain {
-						if preset == chain {
-							exists = true
-							break
-						}
-					}
-					if !exists {
-						presetChain = append(presetChain, chain)
-					}
+				if _, ok := presetChains[chain]; !ok {
+					presetChains[chain] = chain
+					customChains = append(customChains, chain)
 				}
 			}
 		}
-
-		// reorder
-		presetChain = append(append([]string{"PROXY"}, presetChain[3:]...), "UDP", "FALLBACK")
 	}
+	// reorder
+	allChains := append(append([]string{"PROXY"}, customChains...), "UDP", "FALLBACK", "CNSITE")
 
 	if c.Mode == PROXY {
 		if c.MixedPort == 0 {
@@ -846,13 +845,15 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 		instance_groups_keys = append(instance_groups_keys, g["name"].(string))
 	}
 	instance_selectors := []YamlStrDict{}
-	for _, selector := range append(presetChain, c.Selector...) {
+	for _, selector := range append(allChains, c.Selector...) {
 		var _p []string
 
 		if selector == "PROXY" {
 			_p = append(instance_groups_keys, "DIRECT")
 		} else if selector == "FALLBACK" {
 			_p = []string{"PROXY", "DIRECT"}
+		} else if selector == "CNSITE" {
+			_p = []string{"DIRECT", "PROXY"}
 		} else {
 			_p = append([]string{"PROXY"}, instance_groups_keys...)
 			_p = append(_p, "DIRECT")
