@@ -32,7 +32,7 @@ func init() {
 			return
 		}
 
-		memfsStore(fp, src)
+		fsStore(fp, src)
 	}
 }
 
@@ -65,13 +65,13 @@ var NO_ANSWER = map[string]struct{}{
 }
 
 func loadUpstreams() (tpl map[string]UpstreamSpec, err error) {
-	upstreams_yaml := memfsLoad("./upstreams.yaml")
+	upstreams_yaml := fsLoad("./upstreams.yaml")
 	err = yaml.Unmarshal(upstreams_yaml, &tpl)
 	return
 }
 
 func loadTemplate() (tpl map[string]interface{}, err error) {
-	template_yaml := memfsLoad("./template.yaml")
+	template_yaml := fsLoad("./template.yaml")
 
 	err = yaml.Unmarshal(template_yaml, &tpl)
 	if err != nil {
@@ -157,9 +157,7 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 		goto bad
 	}
 	cfg.Secret = query.Get("secret")
-	if cfg.Dns = getAttitude(query, "dns"); err != nil {
-		goto bad
-	}
+	cfg.Dns = getAttitude(query, "dns")
 	cfg.DnsListen = query.Get("dns_listen")
 	if cfg.DnsPort, err = getNumber(query, "dns_port"); err != nil {
 		goto bad
@@ -226,7 +224,7 @@ func handleFileOp(w http.ResponseWriter, r *http.Request) {
 
 	path := r.URL.Path[1:]
 	if r.Method == "GET" {
-		target_file := memfsLoad(path)
+		target_file := fsLoad(path)
 		w.Header().Set("Content-Type", "application/x-yaml")
 		w.Write(target_file)
 		return
@@ -259,7 +257,7 @@ func handleFileOp(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
-	memfsStore(path, data)
+	fsStore(path, data)
 }
 
 func handleRuleProviders(w http.ResponseWriter, r *http.Request) {

@@ -6,22 +6,48 @@ import (
 	"path/filepath"
 )
 
-var FAKEFS = map[string][]byte{}
+var FS_IS_READONLY = false
 
-func memfsStore(fspath string, data []byte) {
+func init() {
+	// Test if the filesystem is read-only
+	os.Remove(".ct_test_fs")
+	_, err := os.OpenFile(".ct_test_fs", os.O_RDWR|os.O_CREATE|os.O_EXCL, 0644)
+	if err != nil {
+		log.Println("Filesystem is read-only")
+		FS_IS_READONLY = true
+	}
+}
+
+func fsStore(fspath string, data []byte) {
+	if FS_IS_READONLY {
+		fsStoreFake(fspath, data)
+	} else {
+		fsStoreReal(fspath, data)
+	}
+}
+
+func fsStoreReal(fspath string, data []byte) {
 	key := resolvePath(fspath)
-	FAKEFS[key] = data
-
-	// try write to real file
 	err := os.WriteFile(key, data, 0644)
 	if err != nil {
 		log.Println("Error writing file to real fs:", err)
 	}
 }
 
-func memfsLoad(fspath string) []byte {
+func fsLoad(fspath string) []byte {
+	if FS_IS_READONLY {
+		return fsLoadFake(fspath)
+	}
+	return fsLoadReal(fspath)
+}
+
+func fsLoadReal(fspath string) []byte {
 	key := resolvePath(fspath)
-	return FAKEFS[key]
+	data, err := os.ReadFile(key)
+	if err != nil {
+		log.Println("Error reading file from real fs:", err)
+	}
+	return data
 }
 
 func resolvePath(fspath string) string {
@@ -33,4 +59,16 @@ func resolvePath(fspath string) string {
 		return fspath
 	}
 	return absPath
+}
+
+var FAKEFS = map[string][]byte{}
+
+func fsStoreFake(fspath string, data []byte) {
+	key := resolvePath(fspath)
+	FAKEFS[key] = data
+}
+
+func fsLoadFake(fspath string) []byte {
+	key := resolvePath(fspath)
+	return FAKEFS[key]
 }
