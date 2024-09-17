@@ -549,12 +549,12 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 	customChains := []string{}
 	if tpl_rules, ok := c.Template["rules"]; ok {
 		presetChains := map[string]string{
-			"DIRECT":         "DIRECT",
-			"REJECT":         "REJECT",
-			"PROXY":          "PROXY",
-			"UDP":            "UDP",
-			"FALLBACK":       "FALLBACK",
-			"CNSITE":         "CNSITE",
+			"DIRECT":   "DIRECT",
+			"REJECT":   "REJECT",
+			"PROXY":    "PROXY",
+			"UDP":      "UDP",
+			"FALLBACK": "FALLBACK",
+			"CNSITE":   "CNSITE",
 		}
 		for _, rule := range tpl_rules.([]interface{}) {
 			rulesegs := strings.Split(rule.(string), ",")
@@ -927,18 +927,19 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 			for _, pattern := range rule_provider["patterns"].([]interface{}) {
 				pattern := pattern.(string)
 				new_rule := ""
-				if behavior == "domain" {
-					new_rule = fmt.Sprintf("DOMAIN,%s,%s", pattern, rule_action)
-				} else if behavior == "ipcidr" {
-					new_rule = fmt.Sprintf("IP-CIDR,%s,%s", pattern, rule_action)
-				} else if behavior == "classical" {
+				if strings.HasPrefix(pattern, "DOMAIN") || strings.HasPrefix(pattern, "IP-CIDR") || behavior == "classical" {
 					if strings.Contains(pattern, ",no-resolve") {
 						pattern = strings.Replace(pattern, ",no-resolve", "", 1)
 						new_rule = fmt.Sprintf("%s,%s,no-resolve", pattern, rule_action)
 					} else {
 						new_rule = fmt.Sprintf("%s,%s", pattern, rule_action)
 					}
+				} else if behavior == "domain" {
+					new_rule = fmt.Sprintf("DOMAIN,%s,%s", pattern, rule_action)
+				} else if behavior == "ipcidr" {
+					new_rule = fmt.Sprintf("IP-CIDR,%s,%s", pattern, rule_action)
 				} else {
+					log.Printf("Unknown behavior: %s", behavior)
 					continue
 				}
 				rules = append(rules, new_rule)
@@ -953,10 +954,42 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 			rule_set_name := rule_set_name.(string)
 			rule_provider := rule_provider.(map[interface{}]interface{})
 
-			proxyUrl := fmt.Sprintf("http://%s/rule-providers?rule-set=%s", r.Host, rule_set_name)
+			proxyUrl := fmt.Sprintf("%s://%s/rule-providers?rule-set=%s", Scheme(r), HostAndPort(r), rule_set_name)
 			rule_provider["url"] = proxyUrl
 		}
 	}
 
 	return c.Template, nil
+}
+
+func Scheme(r *http.Request) string {
+	// Can't use `r.Request.URL.Scheme`
+	// See: https://groups.google.com/forum/#!topic/golang-nuts/pMUkBlQBDF0
+	if scheme := r.Header.Get("X-Forwarded-Proto"); scheme != "" {
+		return scheme
+	}
+	if scheme := r.Header.Get("X-Forwarded-Protocol"); scheme != "" {
+		return scheme
+	}
+	if ssl := r.Header.Get("X-Forwarded-Ssl"); ssl == "on" {
+		return "https"
+	}
+	if scheme := r.Header.Get("X-Url-Scheme"); scheme != "" {
+		return scheme
+	}
+	if scheme := r.Header.Get("X-Scheme"); scheme != "" {
+		return scheme
+	}
+	return "http"
+}
+
+func HostAndPort(r *http.Request) string {
+	host := r.Header.Get("X-Forwarded-Host")
+	if host == "" {
+		host = r.Host
+	}
+	if host == "" {
+		host = r.Header.Get("Host")
+	}
+	return host
 }
