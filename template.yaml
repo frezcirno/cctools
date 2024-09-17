@@ -313,28 +313,28 @@ rule-providers:
   zju_internal:
     type: http
     behavior: classical
-    url: "/convert?url=https://jsd.cdn.zzko.cn/gh/ZJU-Rule/ZJU-Rule/Clash/ZJU.list"
+    url: "/convert?url=https://jsd.cdn.zzko.cn/gh/SubConv/ZJU-Rule/Clash/ZJU.list"
     path: ./ruleset/ZJU-Rule_ZJU.yaml
     interval: 86400
 
   scholar:
     type: http
     behavior: classical
-    url: "/convert?url=https://jsd.cdn.zzko.cn/gh/ZJU-Rule/ZJU-Rule/Clash/ZJU-More-Scholar.list"
+    url: "/convert?url=https://jsd.cdn.zzko.cn/gh/SubConv/ZJU-Rule/Clash/ZJU-More-Scholar.list"
     path: ./ruleset/ZJU-Rule_ZJU-More-Scholar.yaml
     interval: 86400
 
   openai:
     type: http
     behavior: classical
-    url: "/convert?url=https://jsd.cdn.zzko.cn/gh/ZJU-Rule/ZJU-Rule/Clash/Ruleset/OpenAi.list"
+    url: "/convert?url=https://jsd.cdn.zzko.cn/gh/SubConv/ZJU-Rule/Clash/Ruleset/OpenAi.list"
     path: ./ruleset/ZJU-Rule_OpenAi.yaml
     interval: 86400
 
   chatbot:
     type: http
     behavior: classical
-    url: "/convert?url=https://jsd.cdn.zzko.cn/gh/ZJU-Rule/ZJU-Rule/Clash/Ruleset/ChatBot.list"
+    url: "/convert?url=https://jsd.cdn.zzko.cn/gh/SubConv/ZJU-Rule/Clash/Ruleset/ChatBot.list"
     path: ./ruleset/ZJU-Rule_ChatBot.yaml
     interval: 86400
 
