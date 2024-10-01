@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -24,14 +25,6 @@ var PROXY_BLACKLIST = []string{"DIRECT", "REJECT", "GLOBAL", "✉️", "有效�
 func init() {
 	rand.Seed(time.Now().UnixNano())
 }
-
-type Mode string
-
-const (
-	PROXY Mode = "proxy"
-	TUN   Mode = "tun"
-	REDIR Mode = "redir"
-)
 
 type UpstreamSpec struct {
 	Name          string   `yaml:"name"`
@@ -400,54 +393,84 @@ const (
 	Other   Platform = "other"
 )
 
+type RuleProviderTransform string
+
+const (
+	RPT_NONE   RuleProviderTransform = "none"
+	RPT_PROXY  RuleProviderTransform = "proxy"
+	RPT_INLINE RuleProviderTransform = "inline"
+)
+
+func StringToRuleProviderTransform(s string) (RuleProviderTransform, error) {
+	switch s {
+	case string(RPT_NONE), string(RPT_PROXY), string(RPT_INLINE):
+		return RuleProviderTransform(s), nil
+	default:
+		return RPT_NONE, fmt.Errorf("invalid RuleProviderTransform: %s", s)
+	}
+}
+
+type ExternalControllerType string
+
+const (
+	NONE  ExternalControllerType = ""
+	HTTP  ExternalControllerType = "http"
+	HTTPS ExternalControllerType = "https"
+	UNIX  ExternalControllerType = "unix"
+)
+
+func StringToExternalControllerType(s string) (ExternalControllerType, error) {
+	switch s {
+	case string(NONE), string(HTTP), string(HTTPS), string(UNIX):
+		return ExternalControllerType(s), nil
+	default:
+		return NONE, errors.New("invalid ExternalControllerType")
+	}
+}
+
 type Config struct {
-	Template             map[string]interface{}
-	Mode                 Mode
-	Trusted              bool
-	Port                 int
-	SocksPort            int
-	RedirPort            int
-	TproxyPort           int
-	MixedPort            int
-	ControllerPort       int
-	Secret               string
-	Dns                  Attitude
-	DnsListen            string
-	DnsPort              int
-	Eth                  string
-	KeepUpstreamSelector bool
-	Group                []string
-	Upstreams            map[string]UpstreamSpec
-	Selector             []string
+	Template  map[string]interface{}
+	Upstreams map[string]UpstreamSpec
+
 	Upstream             []string
-	ExpandRuleProviders  bool
-	ProxyRuleProviders   bool
-	Platform             Platform
+	Organizer            []string
+	TopSelect            []string
+	KeepUpstreamSelector bool
+
+	PortProxy bool
+	Bind      string
+	HttpPort  int
+	SocksPort int
+	MixedPort int
+
+	TransProxy bool
+	RedirPort  int
+	TproxyPort int
+
+	AllowLan               bool
+	ExternalControllerType ExternalControllerType
+	ExternalControllerAddr string
+	Secret                 string
+
+	Dns               bool
+	DnsListen         string
+	EnhancedMode      string
+	DefaultNameserver []string
+	Nameserver        []string
+	Fallback          []string
+	NameserverPolicy  map[string]string
+
+	Tun      bool
+	TunStack string
+
+	RuleProviderTransform RuleProviderTransform
+	CustomRules           []string
+	Platform              Platform
 }
 
 func (c *Config) Validate() error {
-	if c.Mode != PROXY && c.Mode != TUN && c.Mode != REDIR {
-		return fmt.Errorf("invalid mode %s", c.Mode)
-	}
-
-	if c.Mode != PROXY && c.Eth == "" {
-		return fmt.Errorf("eth is required in %s mode", c.Mode)
-	}
-
 	if c.Upstreams == nil {
 		return fmt.Errorf("need upstreams")
-	}
-
-	if c.Mode != PROXY {
-		if c.Secret != "" {
-			return fmt.Errorf("secret is not recommended in %s mode", c.Mode)
-		}
-	}
-
-	if c.Mode == PROXY {
-		if c.Port == 0 && c.SocksPort == 0 && c.MixedPort == 0 {
-			return fmt.Errorf("need at least one of port, socks-port or mixed-port")
-		}
 	}
 
 	// for _, upstream := range config.Upstream {
@@ -455,10 +478,6 @@ func (c *Config) Validate() error {
 	// 		return fmt.Errorf("Upstream %s not found", upstream)
 	// 	}
 	// }
-
-	if c.ExpandRuleProviders && c.ProxyRuleProviders {
-		return fmt.Errorf("cannot expand and proxy rule providers at the same time")
-	}
 
 	return nil
 }
@@ -488,56 +507,8 @@ func (c *Config) upstreams() []UpstreamSpec {
 	return selected
 }
 
-func (c *Config) trusted() bool {
-	// in trusted mode, we bind to all interfaces and allow LAN, and disable secret
-	return c.Mode != PROXY || c.Trusted
-}
-
-func (c *Config) controllerPort() int {
-	if c.ControllerPort != 0 {
-		return c.ControllerPort
-	}
-	return 9090
-}
-
-func (c *Config) secret() string {
-	if c.Secret != "" {
-		return c.Secret
-	}
-	if c.trusted() {
-		return ""
-	}
-	c.Secret = randomStr(16)
-	return c.Secret
-}
-
-func (c *Config) dns() bool {
-	return c.Dns == YES || (c.Dns == NA && c.Mode != PROXY)
-}
-
-func (c *Config) dns_listen() string {
-	if c.DnsListen != "" {
-		return c.DnsListen
-	}
-	if c.trusted() {
-		return "*"
-	}
-	return "127.0.0.1"
-}
-
-func (c *Config) dns_port() int {
-	if c.DnsPort != 0 {
-		return c.DnsPort
-	}
-	return 53
-}
-
-func (c *Config) dns_bind() string {
-	return fmt.Sprintf("%s:%d", c.dns_listen(), c.dns_port())
-}
-
 func (c *Config) contains_group(key string) bool {
-	for _, group := range c.Group {
+	for _, group := range c.Organizer {
 		if group == key {
 			return true
 		}
@@ -570,70 +541,66 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 	// reorder
 	allChains := append(append([]string{"PROXY"}, customChains...), "UDP", "FALLBACK", "CNSITE")
 
-	if c.Mode == PROXY {
-		if c.MixedPort == 0 {
-			if c.Port == 0 {
-				c.Port = 7890
-			}
-			if c.SocksPort == 0 {
-				c.SocksPort = 7891
-			}
+	if c.PortProxy {
+		c.Template["allow-lan"] = c.AllowLan
+		c.Template["bind-address"] = c.Bind
+
+		if c.HttpPort != 0 {
+			c.Template["port"] = c.HttpPort
 		}
-	} else if c.Mode == REDIR {
+		if c.SocksPort != 0 {
+			c.Template["socks-port"] = c.SocksPort
+		}
+		if c.MixedPort != 0 {
+			c.Template["mixed-port"] = c.MixedPort
+		}
+	}
+
+	if c.TransProxy {
 		if c.RedirPort == 0 {
-			c.RedirPort = 7982
+			c.RedirPort = 7983
 		}
 		if c.TproxyPort == 0 {
 			c.TproxyPort = 7894
 		}
+
+		if c.RedirPort != 0 {
+			c.Template["redir-port"] = c.RedirPort
+		}
+		if c.TproxyPort != 0 {
+			c.Template["tproxy-port"] = c.TproxyPort
+		}
 	}
 
-	if c.Port != 0 {
-		c.Template["port"] = c.Port
-	}
-	if c.SocksPort != 0 {
-		c.Template["socks-port"] = c.SocksPort
-	}
-	if c.MixedPort != 0 {
-		c.Template["mixed-port"] = c.MixedPort
-	}
-	if c.RedirPort != 0 {
-		c.Template["redir-port"] = c.RedirPort
-	}
-	if c.TproxyPort != 0 {
-		c.Template["tproxy-port"] = c.TproxyPort
+	if c.ExternalControllerType != NONE {
+		if c.ExternalControllerType == HTTP {
+			c.Template["external-controller"] = c.ExternalControllerAddr
+		} else if c.ExternalControllerType == HTTPS {
+			c.Template["external-controller-tls"] = c.ExternalControllerAddr
+		} else if c.ExternalControllerType == UNIX {
+			c.Template["external-controller-unix"] = c.ExternalControllerAddr
+		}
 	}
 
-	if c.trusted() {
-		c.Template["allow-lan"] = true
-		c.Template["bind-address"] = "*"
-	} else {
-		c.Template["allow-lan"] = false
-		c.Template["bind-address"] = "127.0.0.1"
-	}
-	c.Template["external-controller"] = fmt.Sprintf("127.0.0.1:%d", c.controllerPort())
-	c.Template["secret"] = c.secret()
+	c.Template["secret"] = c.Secret
 
-	if c.dns() {
+	if c.Dns {
 		dns := c.Template["dns"].(map[interface{}]interface{})
 		dns["enable"] = true
-		dns["listen"] = c.dns_bind()
-		dns["enhanced-mode"] = "fake-ip"
-		if c.Mode != PROXY {
-			dhcpdns := fmt.Sprintf("dhcp://%s", c.Eth)
-			dns["nameserver"] = append(dns["nameserver"].([]interface{}), dhcpdns)
-			dns["nameserver-policy"].(map[interface{}]interface{})["+.zju.edu.cn"] = dhcpdns
-		}
+		dns["listen"] = c.DnsListen
+		dns["enhanced-mode"] = c.EnhancedMode
+
+		dns["default-nameserver"] = c.DefaultNameserver
+		dns["nameserver"] = c.Nameserver
+		dns["fallback"] = c.Fallback
+		dns["nameserver-policy"] = c.NameserverPolicy // .(map[interface{}]interface{})["+.zju.edu.cn"] = dhcpdns
 	}
 
-	if c.Mode == TUN {
+	if c.Tun {
 		tun := c.Template["tun"].(map[interface{}]interface{})
 		tun["enable"] = true
-		if !c.dns() {
-			tun["dns-hijack"] = []string{}
-		}
+		tun["stack"] = c.TunStack
 		if c.Platform == Windows {
-			tun["stack"] = "gvisor"
 			tun["auto-redir"] = false
 		}
 	}
@@ -845,7 +812,7 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 		instance_groups_keys = append(instance_groups_keys, g["name"].(string))
 	}
 	instance_selectors := []YamlStrDict{}
-	for _, selector := range append(allChains, c.Selector...) {
+	for _, selector := range append(allChains, c.TopSelect...) {
 		var _p []string
 
 		if selector == "PROXY" {
@@ -868,7 +835,7 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 
 	c.Template["proxy-groups"] = append(instance_selectors, instance_groups...)
 
-	if c.ExpandRuleProviders {
+	if c.RuleProviderTransform == RPT_INLINE {
 		rule_providers := c.Template["rule-providers"].(map[interface{}]interface{})
 		delete(c.Template, "rule-providers")
 
@@ -946,9 +913,7 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 			}
 		}
 		c.Template["rules"] = rules
-	}
-
-	if c.ProxyRuleProviders {
+	} else if c.RuleProviderTransform == RPT_PROXY {
 		rule_providers := c.Template["rule-providers"].(map[interface{}]interface{})
 		for rule_set_name, rule_provider := range rule_providers {
 			rule_set_name := rule_set_name.(string)

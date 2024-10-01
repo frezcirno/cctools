@@ -8,6 +8,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -80,6 +81,10 @@ func loadTemplate() (tpl map[string]interface{}, err error) {
 	return
 }
 
+func getString(query url.Values, key string) string {
+	return query.Get(key)
+}
+
 func getNumber(query url.Values, key string) (int, error) {
 	if !query.Has(key) {
 		return 0, nil
@@ -91,34 +96,79 @@ func getNumber(query url.Values, key string) (int, error) {
 	return num, nil
 }
 
+var sep *regexp.Regexp = regexp.MustCompile("[,;]+")
+
 func getStringArray(query url.Values, key string) []string {
 	str := query.Get(key)
 	if str == "" {
 		return []string{}
 	}
-	return strings.Split(str, ",")
+	res := sep.Split(str, -1)
+	for i, s := range res {
+		res[i] = strings.TrimSpace(s)
+	}
+	return res
 }
 
-type Attitude int
+func getStringMap(query url.Values, key string) (map[string]string, error) {
+	str := query.Get(key)
+	if str == "" {
+		return map[string]string{}, nil
+	}
+	m := map[string]string{}
+	for _, user_kv := range sep.Split(str, -1) {
+		kv := strings.SplitN(user_kv, ":", 2)
+		if len(kv) != 2 {
+			return nil, &ErrInvalid{user_kv}
+		}
+		k := strings.TrimSpace(kv[0])
+		v := strings.TrimSpace(kv[1])
+		m[k] = v
+	}
+	return m, nil
+}
 
-const (
-	NO Attitude = iota
-	YES
-	NA
-)
+type ErrInvalid struct {
+	string
+}
 
-func getAttitude(query url.Values, key string) Attitude {
-	if !query.Has(key) {
-		return NA
+func (e *ErrInvalid) Error() string {
+	return fmt.Sprintf("invalid argument: %s", e.string)
+}
+
+type ErrNotExist struct {
+	string
+}
+
+func (e *ErrNotExist) Error() string {
+	return fmt.Sprintf("missing required argument: %s", e.string)
+}
+
+func getBool(query url.Values, key string) (bool, error) {
+	if query.Has(key) {
+		user_str := query.Get(key)
+		str := strings.ToLower(user_str)
+		if _, ok := YES_ANSWER[str]; ok {
+			return true, nil
+		}
+		if _, ok := NO_ANSWER[str]; ok {
+			return false, nil
+		}
+		return false, &ErrInvalid{key}
 	}
-	str := strings.ToLower(query.Get(key))
-	if _, ok := YES_ANSWER[str]; ok {
-		return YES
+	return false, &ErrNotExist{key}
+}
+
+func getBoolOrDefault(query url.Values, key string, def bool) (bool, error) {
+	b, err := getBool(query, key)
+	if err == nil {
+		return b, nil
 	}
-	if _, ok := NO_ANSWER[str]; ok {
-		return NO
+	if _, ok := err.(*ErrNotExist); ok {
+		return def, nil
 	}
-	return NA
+	return false, err
+
 }
 
 func handleConfig(w http.ResponseWriter, r *http.Request) {
@@ -132,68 +182,99 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 	logRequest(r)
 	query := r.URL.Query()
 
-	cfg := Config{}
-	cfg.Mode = Mode(query.Get("mode"))
-	if cfg.Mode == "" {
-		cfg.Mode = PROXY
+	// if no query, return index.html
+	if len(query) == 0 {
+		http.ServeFile(w, r, "index.html")
+		return
 	}
-	cfg.Trusted = getAttitude(query, "trusted") == YES
-	if cfg.Port, err = getNumber(query, "port"); err != nil {
-		goto bad
-	}
-	if cfg.SocksPort, err = getNumber(query, "socks_port"); err != nil {
-		goto bad
-	}
-	if cfg.RedirPort, err = getNumber(query, "redir_port"); err != nil {
-		goto bad
-	}
-	if cfg.TproxyPort, err = getNumber(query, "tproxy_port"); err != nil {
-		goto bad
-	}
-	if cfg.MixedPort, err = getNumber(query, "mixed_port"); err != nil {
-		goto bad
-	}
-	if cfg.ControllerPort, err = getNumber(query, "controller_port"); err != nil {
-		goto bad
-	}
-	cfg.Secret = query.Get("secret")
-	cfg.Dns = getAttitude(query, "dns")
-	cfg.DnsListen = query.Get("dns_listen")
-	if cfg.DnsPort, err = getNumber(query, "dns_port"); err != nil {
-		goto bad
-	}
-	cfg.Eth = query.Get("eth")
-	cfg.KeepUpstreamSelector = getAttitude(query, "keep_upstream_selector") == YES
-	cfg.Group = getStringArray(query, "group")
-	if cfg.Upstreams, err = loadUpstreams(); err != nil {
+
+	c := Config{}
+
+	if c.Upstreams, err = loadUpstreams(); err != nil {
 		goto except
 	}
-	if cfg.Template, err = loadTemplate(); err != nil {
+	if c.Template, err = loadTemplate(); err != nil {
 		goto except
 	}
-	cfg.Selector = getStringArray(query, "selector")
-	cfg.Upstream = getStringArray(query, "upstream")
-	cfg.ExpandRuleProviders = getAttitude(query, "no_rule_providers") == YES
-	cfg.ProxyRuleProviders = getAttitude(query, "proxy_rule_providers") == YES
+
+	c.Upstream = getStringArray(query, "upstream")
+	c.Organizer = getStringArray(query, "organizer")
+	c.TopSelect = getStringArray(query, "top_select")
+	if c.KeepUpstreamSelector, err = getBoolOrDefault(query, "keep_upstream_selector", false); err != nil {
+		goto bad_args
+	}
+
+	if c.PortProxy, err = getBoolOrDefault(query, "port_proxy", false); err != nil {
+		goto bad_args
+	}
+	if c.HttpPort, err = getNumber(query, "port"); err != nil {
+		goto bad_args
+	}
+	if c.SocksPort, err = getNumber(query, "socks_port"); err != nil {
+		goto bad_args
+	}
+	if c.MixedPort, err = getNumber(query, "mixed_port"); err != nil {
+		goto bad_args
+	}
+
+	if c.TransProxy, err = getBoolOrDefault(query, "tproxy", false); err != nil {
+		goto bad_args
+	}
+	if c.RedirPort, err = getNumber(query, "redir_port"); err != nil {
+		goto bad_args
+	}
+	if c.TproxyPort, err = getNumber(query, "tproxy_port"); err != nil {
+		goto bad_args
+	}
+
+	if c.AllowLan, err = getBoolOrDefault(query, "allow_lan", false); err != nil {
+		goto bad_args
+	}
+	if c.ExternalControllerType, err = StringToExternalControllerType(getString(query, "external_controller_type")); err != nil {
+		goto bad_args
+	}
+	c.ExternalControllerAddr = getString(query, "external_controller_addr")
+	c.Secret = getString(query, "secret")
+
+	if c.Dns, err = getBoolOrDefault(query, "dns", false); err != nil {
+		goto bad_args
+	}
+	c.DnsListen = getString(query, "dns_listen")
+	c.EnhancedMode = getString(query, "enhanced_mode")
+	c.DefaultNameserver = getStringArray(query, "default_nameserver")
+	c.Nameserver = getStringArray(query, "nameserver")
+	c.Fallback = getStringArray(query, "fallback")
+	if c.NameserverPolicy, err = getStringMap(query, "nameserver_policy"); err != nil {
+		goto bad_args
+	}
+
+	if c.Tun, err = getBoolOrDefault(query, "tun", false); err != nil {
+		goto bad_args
+	}
+	c.TunStack = getString(query, "tun_stack")
+
+	if c.RuleProviderTransform, err = StringToRuleProviderTransform(getString(query, "rule_provider_transform")); err != nil {
+		goto bad_args
+	}
 
 	ua = r.Header.Get("User-Agent")
 	if strings.Contains(ua, "Windows") {
-		cfg.Platform = Windows
+		c.Platform = Windows
 	} else if strings.Contains(ua, "Linux") {
-		cfg.Platform = Linux
+		c.Platform = Linux
 	} else if strings.Contains(ua, "Android") {
-		cfg.Platform = Android
+		c.Platform = Android
 	} else if strings.Contains(ua, "Darwin") {
-		cfg.Platform = Darwin
+		c.Platform = Darwin
 	} else {
-		cfg.Platform = Other
+		c.Platform = Other
 	}
 
-	if err = cfg.Validate(); err != nil {
-		goto bad
+	if err = c.Validate(); err != nil {
+		goto bad_args
 	}
 
-	instance, err = cfg.generate(r)
+	instance, err = c.generate(r)
 	if err != nil {
 		goto except
 	}
@@ -207,7 +288,7 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 	w.Write(out)
 	return
 
-bad:
+bad_args:
 	http.Error(w, err.Error(), http.StatusBadRequest)
 	return
 

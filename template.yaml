@@ -46,12 +46,15 @@ log-level: warning
 # ipv6: false
 
 # RESTful web API listening address
-external-controller: 127.0.0.1:9090
+external-controller:
 
 # A relative path to the configuration directory or an absolute path to a
 # directory in which you put some static web resource. Clash core will then
 # serve it at `http://{{external-controller}}/ui`.
 external-ui:
+
+# RESTful API for DoH (DNS over HTTPS) server
+external-doh-server: /dns-query
 
 # Secret for the RESTful API (optional)
 # Authenticate by spedifying HTTP header `Authorization: Bearer ${secret}`
@@ -199,9 +202,9 @@ tun:
   stack: system # or gvisor
   dns-hijack:
     - any:53
-  # Use Linux kernel nftables feature on pure Go. It can be replaced with redir-port (TCP) without any network config.
-  auto-redir: true
   auto-route: true # auto set global route
+  # Use Linux kernel nftables feature on pure Go. It can be replaced with redir-port (TCP) without any network config.
+  auto-redirect: true
   auto-detect-interface: true # conflict with interface-name
 
 proxies:

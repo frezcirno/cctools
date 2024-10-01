@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Configuration Form</title>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary-color: #007BFF;
+      --primary-hover: #0056b3;
+      --background-color: #f5f7fa;
+      --form-background: #ffffff;
+      --fieldset-background: #f9f9f9;
+      --border-color: #ddd;
+      --text-color: #333;
+      --label-color: #555;
+      --highlight-color: rgba(0, 123, 255, 0.2);
+    }
+
+    body {
+      font-family: 'Roboto', sans-serif;
+      background-color: var(--background-color);
+      margin: 0;
+      padding: 20px;
+    }
+
+    h1 {
+      text-align: center;
+      color: var(--text-color);
+      margin-bottom: 40px;
+      font-size: 2rem;
+    }
+
+    form {
+      background-color: var(--form-background);
+      padding: 25px;
+      border-radius: 10px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+      max-width: 850px;
+      margin: 0 auto;
+      transition: all 0.3s ease-in-out;
+    }
+
+    fieldset {
+      border: 1px solid var(--border-color);
+      padding: 20px;
+      border-radius: 8px;
+      margin-bottom: 25px;
+      background-color: var(--fieldset-background);
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+      position: relative;
+    }
+
+    .toggle-checkbox {
+      margin-left: 10px;
+    }
+
+    .fieldset-content {
+      display: grid;
+      grid-template-rows: 0fr;
+      overflow: hidden;
+      transition: grid-template-rows 0.2s ease-out;
+    }
+
+    .fieldset-content.expanded {
+      grid-template-rows: 1fr;
+      /* Set to a large enough value to accommodate content */
+      transition: grid-template-rows 0.2s ease-in;
+      /* Smooth transition */
+    }
+
+    .fieldset-content>div {
+      /*使子元素动画与父元素保持一致*/
+      grid-row: 1 / span 2;
+      /*overflow也设置给子元素*/
+      overflow: hidden;
+    }
+
+    .fieldset-legend {
+      font-weight: 500;
+      color: var(--primary-color);
+      font-size: 1.1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 10px;
+      white-space: nowrap;
+    }
+
+    .selectable {
+      cursor: pointer;
+    }
+
+    .form-item {
+      display: flex;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+
+    .item-label {
+      width: 140px;
+      margin-right: 15px;
+      text-align: right;
+      color: var(--label-color);
+      font-size: 1rem;
+    }
+
+    .item-content {
+      flex: 1;
+      margin-left: 10px;
+    }
+
+    input,
+    select {
+      padding: 10px;
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      box-sizing: border-box;
+      font-size: 1rem;
+      transition: all 0.3s ease;
+    }
+
+    input[type="text"]:focus,
+    select:focus {
+      border-color: var(--primary-color);
+      box-shadow: 0 0 8px var(--highlight-color);
+    }
+
+    .radio-group,
+    .checkbox-group {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .checkbox-item,
+    .radio-group label {
+      display: flex;
+      align-items: center;
+      font-size: 1rem;
+    }
+
+    .checkbox-item input,
+    .radio-group input {
+      margin-right: 8px;
+    }
+
+    input[type="checkbox"] {
+      width: auto;
+    }
+
+    button {
+      padding: 11px 30px;
+      background-color: var(--primary-color);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 1rem;
+      transition: background-color 0.3s ease;
+      /* margin-top: 20px; */
+    }
+
+    button:hover {
+      background-color: var(--primary-hover);
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    @media (max-width: 600px) {
+      .item-label {
+        width: auto;
+        text-align: left;
+      }
+
+      .form-item {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      input,
+      select {
+        width: 100%;
+      }
+
+      .radio-group,
+      .checkbox-group {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+    }
+  </style>
+  <script>
+    function generateRandomPassword(length) {
+      const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+-=[]{}|;:,.<>?';
+      let password = '';
+
+      for (let i = 0; i < length; i++) {
+        const randomIndex = Math.floor(Math.random() * characters.length);
+        password += characters[randomIndex];
+      }
+
+      return password;
+    }
+
+    function getOperatingSystem() {
+      const userAgent = window.navigator.userAgent;
+      const platform = window.navigator.platform;
+
+      if (platform.indexOf('Win') !== -1) {
+        return 'windows';
+      } else if (platform.indexOf('Linux') !== -1) {
+        return 'linux';
+      } else if (platform.indexOf('Mac') !== -1) {
+        return 'darwin';
+      } else if (/Android/.test(userAgent)) {
+        return 'android';
+      } else if (/iPhone|iPad|iPod/.test(userAgent)) {
+        return 'darwin';
+      } else {
+        return 'other';
+      }
+    }
+
+    const platform = getOperatingSystem();
+  </script>
+</head>
+
+<body>
+  <main>
+    <h1>Configure Your Proxy</h1>
+
+    <form action="#" method="GET" onsubmit="handleSubmit(event)">
+      <fieldset>
+        <legend class="fieldset-legend">Proxy Node Configuration</legend>
+        <div class="fieldset-content expanded" id="content-proxy-node">
+          <div>
+            <div class="form-item">
+              <label class="item-label" for="upstream">Upstreams</label>
+              <input class="item-content" type="text" id="upstream" name="upstream" placeholder="default">
+            </div>
+
+            <div class="form-item">
+              <label class="item-label">Organize Nodes By</label>
+              <div class="item-content checkbox-group">
+                <div class="checkbox-item">
+                  <label class="selectable"><input type="checkbox" id="organizer-cn" name="organizer-cn"
+                      checked>CN</label>
+                </div>
+                <div class="checkbox-item">
+                  <label class="selectable"><input type="checkbox" id="organizer-tw" name="organizer-tw">Taiwan</label>
+                </div>
+                <div class="checkbox-item">
+                  <label class="selectable"><input type="checkbox" id="organizer-oversea" name="organizer-oversea"
+                      checked>Oversea</label>
+                </div>
+                <div class="checkbox-item">
+                  <label class="selectable"><input type="checkbox" id="organizer-udp" name="organizer-udp"
+                      checked>UDP</label>
+                </div>
+              </div>
+            </div>
+
+            <div class="form-item">
+              <label class="item-label" for="top_select">Top Selectors</label>
+              <input class="item-content" type="text" id="top_select" name="top_select" placeholder="">
+            </div>
+
+            <div class="form-item">
+              <label class="item-label" for="keep_upstream_select">Keep Upstream Selector</label>
+              <input class="item-content" type="checkbox" id="keep_upstream_select" name="keep_upstream_select">
+            </div>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>
+          <label class="fieldset-legend selectable">
+            Port Proxy
+            <input type="checkbox" class="toggle-checkbox" id="port_proxy" name="port_proxy" checked
+              onchange="toggleFieldset('port_proxy')">
+          </label>
+        </legend>
+        <div class="fieldset-content" id="content-port_proxy">
+          <div>
+            <!-- bind-address: str -->
+            <div class="form-item">
+              <label class="item-label" for="bind_address">Bind Address</label>
+              <input class="item-content" type="text" id="bind_address" name="bind_address" placeholder="127.0.0.1">
+            </div>
+
+            <!-- http-port -->
+            <div class="form-item">
+              <label class="item-label" for="port">HTTP Port</label>
+              <input class="item-content" type="number" id="port" name="port" placeholder="7890" min="1">
+            </div>
+            <!-- socks-port -->
+            <div class="form-item">
+              <label class="item-label" for="socks_port">SOCKS Port</label>
+              <input class="item-content" type="number" id="socks_port" name="socks_port" placeholder="7891" min="1">
+            </div>
+            <!-- mixed-port -->
+            <div class="form-item">
+              <label class="item-label" for="mixed_port">Mixed Port</label>
+              <input class="item-content" type="number" id="mixed_port" name="mixed_port" placeholder="7892" min="1">
+            </div>
+
+            <!-- allow-lan: bool -->
+            <div class="form-item">
+              <label class="item-label" for="allow_lan">Allow LAN</label>
+              <input class="item-content" type="checkbox" id="allow_lan" name="allow_lan">
+            </div>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>
+          <label class="fieldset-legend selectable">
+            Transparent Proxy
+            <input type="checkbox" class="toggle-checkbox" id="tproxy" name="tproxy"
+              onchange="toggleFieldset('tproxy')">
+          </label>
+        </legend>
+        <div class="fieldset-content" id="content-tproxy">
+          <div>
+            <div class="form-item">
+              <label class="item-label" for="redir_port">Redirect Port</label>
+              <input class="item-content" type="number" id="redir_port" name="redir_port" placeholder="7893" min="1">
+            </div>
+
+            <div class="form-item">
+              <label class="item-label" for="tproxy_port">TProxy Port</label>
+              <input class="item-content" type="number" id="tproxy_port" name="tproxy_port" placeholder="7894" min="1">
+            </div>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend class="fieldset-legend">ACL Configuration</legend>
+        <div class="fieldset-content expanded" id="content-acl">
+          <div>
+
+            <!-- external-controller-type: none/http/https/unix -->
+            <div class="form-item">
+              <label class="item-label" for="external_controller_type">External Controller Type</label>
+              <div id="external_controller_type" class="item-content radio-group">
+                <label class="selectable"><input type="radio" id="external_controller_type-none"
+                    name="external_controller_type" value="none" onchange="ect_change(event)">none</label>
+                <label class="selectable"><input type="radio" id="external_controller_type-http"
+                    name="external_controller_type" value="http" checked onchange="ect_change(event)">http</label>
+                <label class="selectable"><input type="radio" id="external_controller_type-https"
+                    name="external_controller_type" value="https" onchange="ect_change(event)">https</label>
+                <label class="selectable"><input type="radio" id="external_controller_type-unix"
+                    name="external_controller_type" value="unix" onchange="ect_change(event)">unix</label>
+              </div>
+            </div>
+            <script>
+              function ect_change(event) {
+                const value = event.target.value;
+                const addr = document.getElementById('form-external_controller_addr');
+                const addr_input = document.getElementById('external_controller_addr');
+                const secret = document.getElementById('form-external_controller_secret');
+                if (value === 'none') {
+                  addr.classList.add('hidden');
+                  secret.classList.add('hidden');
+                  addr_input.placeholder = '127.0.0.1:9090';
+                } else if (value === 'http' || value === 'https') {
+                  addr.classList.remove('hidden');
+                  secret.classList.remove('hidden');
+                  addr_input.placeholder = '127.0.0.1:9090';
+                } else { // if (value === 'unix') {
+                  addr.classList.remove('hidden');
+                  secret.classList.add('hidden');
+                  addr_input.placeholder = 'mihomo.sock';
+                }
+              }
+            </script>
+
+            <!-- external-controller-addr: string -->
+            <div class="form-item" id="form-external_controller_addr">
+              <label class="item-label" for="external_controller_addr">External Controller</label>
+              <input class="item-content" type="text" id="external_controller_addr" name="external_controller_addr"
+                placeholder="127.0.0.1:9090">
+            </div>
+
+            <div class="form-item" id="form-external_controller_secret">
+              <label class="item-label" for="external_controller_secret">Secret</label>
+              <input class="item-content" type="text" id="external_controller_secret" name="external_controller_secret">
+              <button type="button" style="margin-left: 10px;"
+                onclick="document.getElementById('external_controller_secret').value = generateRandomPassword(16)">
+                Generate</button>
+              <script>
+                document.getElementById('external_controller_secret').value = generateRandomPassword(16);
+              </script>
+            </div>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>
+          <label class="fieldset-legend selectable">
+            DNS Server
+            <input type="checkbox" class="toggle-checkbox" id="dns" name="dns" checked onchange="toggleFieldset('dns')">
+          </label>
+        </legend>
+        <div class="fieldset-content" id="content-dns">
+          <div>
+            <!-- listen: string -->
+            <div class="form-item">
+              <label class="item-label" for="dns_listen">Listen Address</label>
+              <input class="item-content" type="text" id="dns_listen" name="dns_listen" placeholder="127.0.0.1:53">
+            </div>
+
+            <!-- enhanced-mode: fake-ip/redir-host -->
+            <div class="form-item">
+              <label class="item-label" for="enhanced_mode">Enhanced Mode</label>
+              <div id="enhanced_mode" class="item-content radio-group">
+                <label class="selectable"><input type="radio" id="enhanced_mode-fake-ip" name="enhanced_mode"
+                    value="fake-ip" checked>fake-ip</label>
+                <label class="selectable"><input type="radio" id="enhanced_mode-redir-host" name="enhanced_mode"
+                    value="redir-host">redir-host</label>
+              </div>
+            </div>
+
+            <!-- default-nameserver: string1, string2... -->
+            <div class="form-item">
+              <label class="item-label" for="default_nameserver">Default Nameserver</label>
+              <input class="item-content" type="text" id="default_nameserver" name="default_nameserver"
+                placeholder="1.0.0.1, 103.2.57.5, 103.2.57.6, 101.101.101.101">
+            </div>
+
+            <!-- nameserver: string1, string2 -->
+            <div class="form-item">
+              <label class="item-label" for="nameserver">Nameserver</label>
+              <input class="item-content" type="text" id="nameserver" name="nameserver"
+                placeholder="223.5.5.5, 119.29.29.29">
+            </div>
+            <script>
+              {
+                const nameserver = document.getElementById('nameserver');
+                if (platform === 'windows') {
+                  nameserver.placeholder += ', dhcp://WLAN';
+                } else if (platform === 'linux') {
+                  nameserver.placeholder += ', dhcp://ens12p0';
+                }
+              }
+            </script>
+
+            <!-- fallback: string1,string2 -->
+            <div class="form-item">
+              <label class="item-label" for="fallback">Fallback</label>
+              <textarea class="item-content" rows="4" id="fallback" name="fallback" placeholder="https://1.0.0.1/dns-query,
+https://public.dns.iij.jp/dns-query, 
+https://101.101.101.101/dns-query, 
+https://13800000000.rubyfish.cn/
+                "></textarea>
+            </div>
+
+            <!-- Nameserver-policy: key1:val1, key2:val2 -->
+            <div class="form-item">
+              <label class="item-label" for="nameserver_policy">Nameserver Policy</label>
+              <textarea class="item-content" rows="4" id="nameserver_policy" name="nameserver_policy"
+                placeholder="+.cn: 223.5.5.5; +.zju.edu.cn: 223.5.5.5"></textarea>
+            </div>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>
+          <label class="fieldset-legend selectable">
+            TUN
+            <input type="checkbox" class="toggle-checkbox" id="tun" name="tun" checked onchange="toggleFieldset('tun')">
+          </label>
+        </legend>
+        <div class="fieldset-content" id="content-tun">
+          <div>
+            <div class="form-item">
+              <label class="item-label" for="tun_stack">TUN Stack</label>
+              <div id="tun_stack" class="item-content radio-group">
+                <label class="selectable"><input type="radio" id="tun_stack-system" name="tun_stack"
+                    value="system">system</label>
+                <label class="selectable"><input type="radio" id="tun_stack-gvisor" name="tun_stack"
+                    value="gvisor">gvisor</label>
+                <label class="selectable"><input type="radio" id="tun_stack-mixed" name="tun_stack"
+                    value="mixed">mixed</label>
+              </div>
+              <script>
+                {
+                  // windows default to gvisor, others default to system
+                  if (platform === 'windows') {
+                    document.getElementById('tun_stack-gvisor').checked = true;
+                  } else {
+                    document.getElementById('tun_stack-system').checked = true;
+                  }
+                }
+              </script>
+            </div>
+            <!-- <div class="form-item">
+              <label class="item-label" for="tun_auto_route">Auto Route</label>
+              <input class="item-content" type="checkbox" id="tun_auto_route" name="tun_auto_route">
+            </div> -->
+          </div>
+        </div>
+      </fieldset>
+
+      <!-- Rules -->
+      <fieldset>
+        <legend class="fieldset-legend">Rules</legend>
+        <div class="fieldset-content expanded" id="content-rules">
+          <div>
+            <!-- rule-providers-transform: none/proxy/inline -->
+            <div class="form-item">
+              <label class="item-label" for="rule_provider_transform">Rule Provider Transformation</label>
+              <div id="rule_provider_transform" class="item-content radio-group">
+                <label class="selectable"><input type="radio" id="rule_provider_transform-none"
+                    name="rule_provider_transform" value="none" checked>none</label>
+                <label class="selectable"><input type="radio" id="rule_provider_transform-proxy"
+                    name="rule_provider_transform" value="proxy">proxy</label>
+                <label class="selectable"><input type="radio" id="rule_provider_transform-inline"
+                    name="rule_provider_transform" value="inline">inline</label>
+              </div>
+            </div>
+
+            <!-- custom rules: string -->
+            <div class="form-item">
+              <label class="item-label" for="custom_rules">Custom Rules</label>
+              <textarea class="item-content" id="custom_rules" name="custom_rules" rows="5"
+                placeholder="DOMAIN-SUFFIX,leetcode.cn,CNSITE"></textarea>
+            </div>
+          </div>
+        </div>
+      </fieldset>
+
+      <!-- misc -->
+      <fieldset>
+        <legend class="fieldset-legend">Misc</legend>
+        <div class="fieldset-content expanded" id="content-misc">
+          <div>
+            <div class="form-item">
+              <label class="item-label" for="log_level">Log Level</label>
+              <select class="item-content" id="log_level" name="log_level">
+                <option value="info">info</option>
+                <option value="warning">warning</option>
+                <option value="error">error</option>
+                <option value="debug">debug</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </fieldset>
+
+      <div class="result">
+        <h2>Configuration Result</h2>
+        <textarea id="result" rows="8" style="width: 100%; margin-bottom: 20px;" onfocus="this.select()"
+          onclick="this.select()" onmouseup="return false;"></textarea>
+      </div>
+
+      <button type="submit" style="margin-top: 20px;">Generate URL</button>
+    </form>
+  </main>
+
+  <script>
+    function toggleFieldset(id) {
+      const content = document.getElementById(`content-${id}`);
+      const checkbox = document.getElementById(id);
+
+      if (checkbox.checked) {
+        content.classList.add('expanded');  // Add class to expand
+      } else {
+        content.classList.remove('expanded');  // Remove class to collapse
+      }
+    }
+
+    // Initialize visibility based on checkbox state
+    document.querySelectorAll('.toggle-checkbox').forEach(checkbox => {
+      toggleFieldset(checkbox.id);
+    });
+
+
+    function handleSubmit(event) {
+      event.preventDefault(); // 阻止表单的默认提交行为
+      const form = event.target; // 获取表单
+      // 获取所有的输入框
+      form.querySelectorAll('input').forEach(input => {
+        // 如果输入框是空的，并且有占位符，使用占位符值
+        if (!input.value && input.placeholder) {
+          input.value = input.placeholder;
+        }
+      });
+      // textarea同理
+      form.querySelectorAll('textarea').forEach(textarea => {
+        if (!textarea.value && textarea.placeholder) {
+          textarea.value = textarea.placeholder;
+        }
+      });
+
+      // 显示结果
+      const result = document.getElementById('result');
+      const data = Object.fromEntries(new FormData(form));
+
+      // merge organizer-* into organizer
+      data.organizer = Object.keys(data).filter(key => key.startsWith('organizer-')).map(key => key.split('-')[1]).join(',');
+      delete data['organizer-cn'];
+      delete data['organizer-tw'];
+      delete data['organizer-oversea'];
+      delete data['organizer-udp'];
+
+      // make up URL
+      const currentUrl = new URL(window.location.href);
+      const params = new URLSearchParams(data).toString();
+      const url = `${currentUrl.origin}${currentUrl.pathname}?${params}`;
+
+      result.textContent = url;
+      // 阻止表单的默认提交行为
+      return false;
+    }
+
+  </script>
+</body>
+
+</html>

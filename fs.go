@@ -16,6 +16,7 @@ func init() {
 		log.Println("Filesystem is read-only")
 		FS_IS_READONLY = true
 	}
+	os.Remove(".ct_test_fs")
 }
 
 func fsStore(fspath string, data []byte) {
