@@ -65,7 +65,7 @@ var NO_ANSWER = map[string]struct{}{
 	"false": {},
 }
 
-func loadUpstreams() (tpl map[string]UpstreamSpec, err error) {
+func loadUpstreams() (tpl map[string]AirportSpec, err error) {
 	upstreams_yaml := fsLoad("./upstreams.yaml")
 	err = yaml.Unmarshal(upstreams_yaml, &tpl)
 	return
@@ -405,8 +405,8 @@ func main() {
 	http.HandleFunc("/rule-providers", handleRuleProviders)
 	http.Handle("/convert", makeProxy())
 
-	log.Printf("Starting server on port 9000...\n")
-	if err := http.ListenAndServe(":9000", nil); err != nil {
+	log.Printf("Starting server on 127.0.0.1:9000...\n")
+	if err := http.ListenAndServe("127.0.0.1:9000", nil); err != nil {
 		log.Fatal(err)
 	}
 }

@@ -128,6 +128,13 @@ dns:
     - "*.msftconnecttest.com"
     - localhost.ptlogin2.qq.com
     - WORKGROUP
+    - "xncsi.xboxlive.com"
+    - "xncsi.xboxlive.cn"
+    - "*.msftconnecttest.com"
+    - "*.msftncsi.com"
+    - "xbox.ipv6.microsoft.com"
+    - "x1ds.xboxlive.com"
+    - +.argotunnel.com
 
   # Supports UDP, TCP, DoT, DoH. You can specify the port to connect to.
   # All DNS questions are sent directly to the nameserver, without proxies
@@ -199,7 +206,7 @@ dns:
 
 tun:
   enable: false
-  stack: system # or gvisor
+  stack: gvisor # or system
   dns-hijack:
     - any:53
   auto-route: true # auto set global route
@@ -373,6 +380,8 @@ rules:
   # High level patches
   - DOMAIN-SUFFIX,linkedin.cn,CHATBOT
   - DOMAIN-SUFFIX,linkedin.com,CHATBOT
+  - DOMAIN-SUFFIX,perplexity.ai,CHATBOT
+  - DOMAIN-SUFFIX,hf-mirror.com,CNSITE
 
   # allowed safe trackers
   - DOMAIN,hd.mmstat.com,CNSITE

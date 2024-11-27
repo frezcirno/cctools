@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -23,10 +24,9 @@ const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 var PROXY_BLACKLIST = []string{"DIRECT", "REJECT", "GLOBAL", "✉️", "有效期", "群", "感谢", "非线路"}
 
 func init() {
-	rand.Seed(time.Now().UnixNano())
 }
 
-type UpstreamSpec struct {
+type AirportSpec struct {
 	Name          string   `yaml:"name"`
 	Urls          []string `yaml:"urls"`
 	Ttl           int      `yaml:"ttl"`
@@ -35,41 +35,41 @@ type UpstreamSpec struct {
 	UseCacheOnErr bool     `yaml:"use-cache-on-err"`
 }
 
-func (us *UpstreamSpec) tags() []string {
-	tags := append(us.Tags, us.Name, "all")
-	if us.Enabled {
+func (as *AirportSpec) tags() []string {
+	tags := append(as.Tags, as.Name, "all")
+	if as.Enabled {
 		tags = append(tags, "default")
 	}
 	return tags
 }
 
-type UpstreamData struct {
+type Airport struct {
 	Proxies DictList `yaml:"proxies"`
 	Groups  DictList `yaml:"groups"`
 }
 
-func NewUpstreamData() UpstreamData {
-	return UpstreamData{
+func NewAirport() Airport {
+	return Airport{
 		Proxies: DictList{},
 		Groups:  DictList{},
 	}
 }
 
-func (ud *UpstreamData) renameProxy(key string, new_key string) error {
+func (airport *Airport) renameProxy(key string, new_key string) error {
 	// new_key should not exist
-	if ud.Proxies.get(new_key) != nil {
+	if airport.Proxies.get(new_key) != nil {
 		return fmt.Errorf("proxy %s already exists", new_key)
 	}
 
-	proxy := ud.Proxies.get(key)
+	proxy := airport.Proxies.get(key)
 	if proxy == nil {
 		return fmt.Errorf("proxy %s not found", key)
 	}
 
-	delete(ud.Proxies, key)
-	ud.Proxies.set(new_key, proxy)
+	delete(airport.Proxies, key)
+	airport.Proxies.set(new_key, proxy)
 
-	for _, group := range ud.Groups {
+	for _, group := range airport.Groups {
 		groupProxies, ok := group["proxies"]
 		if !ok {
 			continue
@@ -84,31 +84,31 @@ func (ud *UpstreamData) renameProxy(key string, new_key string) error {
 	return nil
 }
 
-func (ud *UpstreamData) renameGroup(key string, new_key string) error {
-	group := ud.Groups.get(key)
+func (airport *Airport) renameGroup(key string, new_key string) error {
+	group := airport.Groups.get(key)
 	if group == nil {
 		return fmt.Errorf("group %s not found", key)
 	}
 
-	delete(ud.Groups, key)
-	ud.Groups.set(new_key, group)
+	delete(airport.Groups, key)
+	airport.Groups.set(new_key, group)
 
 	return nil
 }
 
-func (ud *UpstreamData) groupAddProxies(key string, proxies []interface{}) error {
+func (airport *Airport) groupAddProxies(key string, proxies []interface{}) error {
 	// validate proxies
 	for _, proxy := range proxies {
-		if ud.Proxies.get(proxy.(string)) == nil {
+		if airport.Proxies.get(proxy.(string)) == nil {
 			return fmt.Errorf("proxy %s not found", proxy)
 		}
 	}
 
 	// ensure group
-	group := ud.Groups.get(key)
+	group := airport.Groups.get(key)
 	if group == nil {
 		group = YamlStrDict{}
-		ud.Groups.set(key, group)
+		airport.Groups.set(key, group)
 	}
 
 	groupProxies, ok := group["proxies"]
@@ -136,10 +136,10 @@ func (ud *UpstreamData) groupAddProxies(key string, proxies []interface{}) error
 	return nil
 }
 
-func (ud *UpstreamData) removeProxy(key string) {
-	delete(ud.Proxies, key)
+func (airport *Airport) removeProxy(key string) {
+	delete(airport.Proxies, key)
 
-	for _, group := range ud.Groups {
+	for _, group := range airport.Groups {
 		groupProxies, ok := group["proxies"]
 		if !ok {
 			continue
@@ -160,10 +160,10 @@ func (ud *UpstreamData) removeProxy(key string) {
 	}
 }
 
-func (ud *UpstreamData) filterProxy(filter func(YamlStrDict) bool) {
-	for key, proxy := range ud.Proxies {
+func (airport *Airport) filterProxy(filter func(YamlStrDict) bool) {
+	for key, proxy := range airport.Proxies {
 		if !filter(proxy) {
-			ud.removeProxy(key)
+			airport.removeProxy(key)
 		}
 	}
 }
@@ -241,13 +241,11 @@ func download(url *url.URL, cache_key string, ttl time.Duration, postprocesser f
 			return nil, err
 		}
 		req.Header = http.Header{
-			"User-Agent": []string{USER_AGENT},
-			"Accept": []string{
-				"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"},
-			"Cache-Control": []string{"no-cache"},
-			"Pragma":        []string{"no-cache"},
-			"Accept-Language": []string{
-				"zh-CN,zh;q=0.9"},
+			"User-Agent":                []string{USER_AGENT},
+			"Accept":                    []string{"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"},
+			"Cache-Control":             []string{"no-cache"},
+			"Pragma":                    []string{"no-cache"},
+			"Accept-Language":           []string{"zh-CN,zh;q=0.9"},
 			"Sec-Fetch-Dest":            []string{"document"},
 			"Sec-Fetch-Mode":            []string{"navigate"},
 			"Sec-Fetch-Site":            []string{"none"},
@@ -292,7 +290,7 @@ func download(url *url.URL, cache_key string, ttl time.Duration, postprocesser f
 	return content, nil
 }
 
-func downloadUpstream(upstream *url.URL, upstream_name string, ttl int, timeout int, use_cache_on_err bool) (*UpstreamData, error) {
+func downloadUpstream(upstream *url.URL, upstream_name string, ttl int, timeout int, use_cache_on_err bool) (*Airport, error) {
 	content, err := download(upstream, upstream_name, time.Duration(ttl)*time.Second, nil, timeout, use_cache_on_err)
 	if err != nil {
 		log.Printf("Failed to retrieve upstream %v: %v", upstream, err)
@@ -320,9 +318,9 @@ func downloadUpstream(upstream *url.URL, upstream_name string, ttl int, timeout 
 	}
 	groups := NewDictList(_groups)
 
-	ud := UpstreamData{proxies, groups}
+	airport := Airport{proxies, groups}
 
-	ud.filterProxy(func(m YamlStrDict) bool {
+	airport.filterProxy(func(m YamlStrDict) bool {
 		for _, b := range PROXY_BLACKLIST {
 			if _, ok := m["name"]; ok {
 				if strings.Contains(m["name"].(string), b) {
@@ -333,10 +331,10 @@ func downloadUpstream(upstream *url.URL, upstream_name string, ttl int, timeout 
 		return true
 	})
 
-	return &ud, nil
+	return &airport, nil
 }
 
-func mergeProxies(from, to UpstreamData) {
+func mergeProxies(from, to Airport) {
 	for _, key := range from.Proxies.keys() {
 		old_key := key
 		for to.Proxies.get(key) != nil {
@@ -349,7 +347,7 @@ func mergeProxies(from, to UpstreamData) {
 	}
 }
 
-func mergeGroups(from, to UpstreamData) {
+func mergeGroups(from, to Airport) {
 	for key := range from.Groups {
 		old_key := key
 		for to.Groups.get(key) != nil {
@@ -362,12 +360,12 @@ func mergeGroups(from, to UpstreamData) {
 	}
 }
 
-func stackUpstreams(upstreams []UpstreamData) UpstreamData {
-	merged := NewUpstreamData()
+func stackAirports(airports []Airport) Airport {
+	merged := NewAirport()
 
-	for _, upstream := range upstreams {
-		mergeProxies(upstream, merged)
-		for key, group := range upstream.Groups {
+	for _, airport := range airports {
+		mergeProxies(airport, merged)
+		for key, group := range airport.Groups {
 			merged.groupAddProxies(key, group["proxies"].([]interface{}))
 		}
 	}
@@ -375,11 +373,11 @@ func stackUpstreams(upstreams []UpstreamData) UpstreamData {
 	return merged
 }
 
-func renameUpstreams(upstreams map[string]UpstreamData) {
-	merged := NewUpstreamData()
-	for _, upstream := range upstreams {
-		mergeProxies(upstream, merged)
-		mergeGroups(upstream, merged)
+func renameUpstreams(airports map[string]Airport) {
+	merged := NewAirport()
+	for _, airport := range airports {
+		mergeProxies(airport, merged)
+		mergeGroups(airport, merged)
 	}
 }
 
@@ -430,7 +428,7 @@ func StringToExternalControllerType(s string) (ExternalControllerType, error) {
 
 type Config struct {
 	Template  map[string]interface{}
-	Upstreams map[string]UpstreamSpec
+	Upstreams map[string]AirportSpec
 
 	Upstream             []string
 	Organizer            []string
@@ -482,9 +480,9 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-func (c *Config) upstreams() []UpstreamSpec {
+func (c *Config) upstreams() []AirportSpec {
 	// select all upstreams matching tags
-	selected := []UpstreamSpec{}
+	selected := []AirportSpec{}
 	userTags := c.Upstream
 	if len(userTags) == 0 {
 		userTags = []string{"default"}
@@ -517,7 +515,7 @@ func (c *Config) contains_group(key string) bool {
 }
 
 func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
-	customChains := []string{}
+	customSelectors := []string{}
 	if tpl_rules, ok := c.Template["rules"]; ok {
 		presetChains := map[string]string{
 			"DIRECT":   "DIRECT",
@@ -533,13 +531,13 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 				chain := rulesegs[2]
 				if _, ok := presetChains[chain]; !ok {
 					presetChains[chain] = chain
-					customChains = append(customChains, chain)
+					customSelectors = append(customSelectors, chain)
 				}
 			}
 		}
 	}
 	// reorder
-	allChains := append(append([]string{"PROXY"}, customChains...), "UDP", "FALLBACK", "CNSITE")
+	allSelectors := append(append([]string{"PROXY"}, customSelectors...), "UDP", "FALLBACK", "CNSITE")
 
 	if c.PortProxy {
 		c.Template["allow-lan"] = c.AllowLan
@@ -608,57 +606,57 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 	// retrieve upstream yamls
 	type pair struct {
 		k string
-		v UpstreamData
+		v Airport
 	}
-	uds := map[string]UpstreamData{}
+	airports := map[string]Airport{}
 	_upstreams := c.upstreams()
 	ch := make(chan pair, len(_upstreams))
 	defer close(ch)
 	for _, upstream := range _upstreams {
 		_copy := upstream
 		go func() {
-			uds := []UpstreamData{}
+			airports := []Airport{}
 			for idx, _url := range _copy.Urls {
 				u, err := url.Parse(_url)
 				if err != nil {
 					continue
 				}
-				ud, err := downloadUpstream(u, fmt.Sprintf("upstream-%s-%d.yaml", _copy.Name, idx), _copy.Ttl, 10, _copy.UseCacheOnErr)
+				airport, err := downloadUpstream(u, fmt.Sprintf("upstream-%s-%d.yaml", _copy.Name, idx), _copy.Ttl, 10, _copy.UseCacheOnErr)
 				if err != nil {
 					continue
 				}
-				uds = append(uds, *ud)
+				airports = append(airports, *airport)
 			}
-			ch <- pair{_copy.Name, stackUpstreams(uds)}
+			ch <- pair{_copy.Name, stackAirports(airports)}
 		}()
 	}
 	for range _upstreams {
 		p := <-ch
-		uds[p.k] = p.v
+		airports[p.k] = p.v
 	}
 
-	// rename streams avoid crash
-	renameUpstreams(uds)
+	// rename streams to avoid name crash
+	renameUpstreams(airports)
 
 	// proxies
-	instance_proxies := DictList{}
-	for _, ud := range uds {
-		instance_proxies.update(ud.Proxies)
+	all_proxies := DictList{}
+	for _, airport := range airports {
+		all_proxies.update(airport.Proxies)
 	}
-	c.Template["proxies"] = instance_proxies.values()
+	c.Template["proxies"] = all_proxies.values()
 
 	// groups
-	instance_groups := []YamlStrDict{}
+	instance_urltest_groups := []YamlStrDict{}
 
 	key := "all"
 
-	if len(instance_proxies) > 0 {
-		instance_groups = append(instance_groups, YamlStrDict{
+	if len(all_proxies) > 0 {
+		instance_urltest_groups = append(instance_urltest_groups, YamlStrDict{
 			"name":      key,
 			"type":      "url-test",
-			"proxies":   instance_proxies.keys(),
+			"proxies":   all_proxies.keys(),
 			"url":       "http://www.gstatic.com/generate_204",
-			"interval":  300,
+			"interval":  86400,
 			"tolerance": 100,
 		})
 	}
@@ -668,7 +666,7 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 	_oversea := []string{}
 	_udp := []string{}
 
-	for _, proxy := range instance_proxies {
+	for _, proxy := range all_proxies {
 		if isCN(proxy) {
 			_cn = append(_cn, proxy["name"].(string))
 		}
@@ -684,59 +682,70 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 	}
 
 	if c.contains_group("cn") && len(_cn) > 0 {
-		instance_groups = append(instance_groups, YamlStrDict{
+		sort.Strings(_cn)
+
+		instance_urltest_groups = append(instance_urltest_groups, YamlStrDict{
 			"name":      fmt.Sprintf("%s-cn", key),
 			"type":      "url-test",
 			"proxies":   _cn,
 			"url":       "http://www.gstatic.com/generate_204",
-			"interval":  300,
+			"interval":  86400,
 			"tolerance": 100,
 		})
 	}
 
 	if c.contains_group("tw") && len(_tw) > 0 {
-		instance_groups = append(instance_groups, YamlStrDict{
+		sort.Strings(_tw)
+
+		instance_urltest_groups = append(instance_urltest_groups, YamlStrDict{
 			"name":      fmt.Sprintf("%s-tw", key),
 			"type":      "url-test",
 			"proxies":   _tw,
 			"url":       "http://www.gstatic.com/generate_204",
-			"interval":  300,
+			"interval":  86400,
 			"tolerance": 100,
 		})
 	}
 
 	if c.contains_group("oversea") && len(_oversea) > 0 {
-		instance_groups = append(instance_groups, YamlStrDict{
+		sort.Strings(_oversea)
+
+		instance_urltest_groups = append(instance_urltest_groups, YamlStrDict{
 			"name":      fmt.Sprintf("%s-oversea", key),
 			"type":      "url-test",
 			"proxies":   _oversea,
 			"url":       "http://www.gstatic.com/generate_204",
-			"interval":  300,
+			"interval":  86400,
 			"tolerance": 100,
 		})
 	}
 
 	if c.contains_group("udp") && len(_udp) > 0 {
-		instance_groups = append(instance_groups, YamlStrDict{
+		sort.Strings(_udp)
+
+		instance_urltest_groups = append(instance_urltest_groups, YamlStrDict{
 			"name":      fmt.Sprintf("%s-udp", key),
 			"type":      "url-test",
 			"proxies":   _udp,
 			"url":       "http://www.gstatic.com/generate_204",
-			"interval":  300,
+			"interval":  86400,
 			"tolerance": 100,
 		})
 	}
 
-	for key, ud := range uds {
-		ud_proxies := ud.Proxies
+	for name, airport := range airports {
+		airport_proxies := airport.Proxies
 
-		if len(ud.Proxies) > 0 {
-			instance_groups = append(instance_groups, YamlStrDict{
-				"name":      fmt.Sprintf("%s-all", key),
+		if len(airport.Proxies) > 0 {
+			airport_proxies_keys := airport_proxies.keys()
+			sort.Strings(airport_proxies_keys)
+
+			instance_urltest_groups = append(instance_urltest_groups, YamlStrDict{
+				"name":      name,
 				"type":      "url-test",
-				"proxies":   ud.Proxies.keys(),
+				"proxies":   airport_proxies_keys,
 				"url":       "http://www.gstatic.com/generate_204",
-				"interval":  300,
+				"interval":  86400,
 				"tolerance": 100,
 			})
 		}
@@ -746,7 +755,7 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 		_oversea := []string{}
 		_udp := []string{}
 
-		for _, proxy := range ud_proxies {
+		for _, proxy := range airport_proxies {
 			if isCN(proxy) {
 				_cn = append(_cn, proxy["name"].(string))
 			}
@@ -762,57 +771,57 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 		}
 
 		if c.contains_group("cn") && len(_cn) > 0 {
-			instance_groups = append(instance_groups, YamlStrDict{
-				"name":      fmt.Sprintf("%s-cn", key),
+			instance_urltest_groups = append(instance_urltest_groups, YamlStrDict{
+				"name":      fmt.Sprintf("%s-cn", name),
 				"type":      "url-test",
 				"proxies":   _cn,
 				"url":       "http://www.gstatic.com/generate_204",
-				"interval":  300,
+				"interval":  86400,
 				"tolerance": 100,
 			})
 		}
 
 		if c.contains_group("tw") && len(_tw) > 0 {
-			instance_groups = append(instance_groups, YamlStrDict{
-				"name":      fmt.Sprintf("%s-tw", key),
+			instance_urltest_groups = append(instance_urltest_groups, YamlStrDict{
+				"name":      fmt.Sprintf("%s-tw", name),
 				"type":      "url-test",
 				"proxies":   _tw,
 				"url":       "http://www.gstatic.com/generate_204",
-				"interval":  300,
+				"interval":  86400,
 				"tolerance": 100,
 			})
 		}
 
 		if c.contains_group("oversea") && len(_oversea) > 0 {
-			instance_groups = append(instance_groups, YamlStrDict{
-				"name":      fmt.Sprintf("%s-oversea", key),
+			instance_urltest_groups = append(instance_urltest_groups, YamlStrDict{
+				"name":      fmt.Sprintf("%s-oversea", name),
 				"type":      "url-test",
 				"proxies":   _oversea,
 				"url":       "http://www.gstatic.com/generate_204",
-				"interval":  300,
+				"interval":  86400,
 				"tolerance": 100,
 			})
 		}
 
 		if c.contains_group("udp") && len(_udp) > 0 {
-			instance_groups = append(instance_groups, YamlStrDict{
-				"name":      fmt.Sprintf("%s-udp", key),
+			instance_urltest_groups = append(instance_urltest_groups, YamlStrDict{
+				"name":      fmt.Sprintf("%s-udp", name),
 				"type":      "url-test",
 				"proxies":   _udp,
 				"url":       "http://www.gstatic.com/generate_204",
-				"interval":  300,
+				"interval":  86400,
 				"tolerance": 100,
 			})
 		}
 	}
 
-	// chains
+	// selector groups
 	instance_groups_keys := []string{}
-	for _, g := range instance_groups {
+	for _, g := range instance_urltest_groups {
 		instance_groups_keys = append(instance_groups_keys, g["name"].(string))
 	}
-	instance_selectors := []YamlStrDict{}
-	for _, selector := range append(allChains, c.TopSelect...) {
+	instance_selector_groups := []YamlStrDict{}
+	for _, selector := range append(allSelectors, c.TopSelect...) {
 		var _p []string
 
 		if selector == "PROXY" {
@@ -821,19 +830,21 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 			_p = []string{"PROXY", "DIRECT"}
 		} else if selector == "CNSITE" {
 			_p = []string{"DIRECT", "PROXY"}
+		} else if selector == "UDP" {
+			_p = []string{"PROXY", "DIRECT"}
 		} else {
 			_p = append([]string{"PROXY"}, instance_groups_keys...)
 			_p = append(_p, "DIRECT")
 		}
 
-		instance_selectors = append(instance_selectors, YamlStrDict{
+		instance_selector_groups = append(instance_selector_groups, YamlStrDict{
 			"name":    selector,
 			"type":    "select",
 			"proxies": _p,
 		})
 	}
 
-	c.Template["proxy-groups"] = append(instance_selectors, instance_groups...)
+	c.Template["proxy-groups"] = append(instance_selector_groups, instance_urltest_groups...)
 
 	if c.RuleProviderTransform == RPT_INLINE {
 		rule_providers := c.Template["rule-providers"].(map[interface{}]interface{})

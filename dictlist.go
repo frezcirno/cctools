@@ -4,6 +4,21 @@ type (
 	YamlStrDict map[string]interface{}
 )
 
+/**
+ * DictList is a map of YamlStrDicts, where the key is the name of the YamlStrDict.
+ * It is used to store the list of dictionaries in the YAML file.
+ * Example:
+ * {
+ *   "dict1": {
+ *       name: "dict1",
+ *       ...
+ *   },
+ *   "dict2": {
+ *       name: "dict2",
+ *       ...
+ *   }
+ * }
+ */
 type DictList map[string]YamlStrDict
 
 func NewDictList(in []interface{}) DictList {
@@ -52,4 +67,8 @@ func (dl *DictList) values() (res []YamlStrDict) {
 		res = append(res, v)
 	}
 	return
+}
+
+func (dl *DictList) Len() int {
+	return len(*dl)
 }
