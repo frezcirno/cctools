@@ -66,13 +66,13 @@ var NO_ANSWER = map[string]struct{}{
 }
 
 func loadUpstreams() (tpl map[string]AirportSpec, err error) {
-	upstreams_yaml := fsLoad("./upstreams.yaml")
+	upstreams_yaml, _ := fsLoad("./upstreams.yaml")
 	err = yaml.Unmarshal(upstreams_yaml, &tpl)
 	return
 }
 
-func loadTemplate() (tpl map[string]interface{}, err error) {
-	template_yaml := fsLoad("./template.yaml")
+func loadTemplate() (tpl map[string]any, err error) {
+	template_yaml, _ := fsLoad("./template.yaml")
 
 	err = yaml.Unmarshal(template_yaml, &tpl)
 	if err != nil {
@@ -176,7 +176,7 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 		err      error
 		out      []byte
 		ua       string
-		instance map[string]interface{}
+		instance map[string]any
 	)
 
 	logRequest(r)
@@ -304,8 +304,8 @@ func handleFileOp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	path := r.URL.Path[1:]
-	if r.Method == "GET" {
-		target_file := fsLoad(path)
+	if r.Method == http.MethodGet {
+		target_file, _ := fsLoad(path)
 		w.Header().Set("Content-Type", "application/x-yaml")
 		w.Write(target_file)
 		return
@@ -342,7 +342,7 @@ func handleFileOp(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleRuleProviders(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "GET" {
+	if r.Method != http.MethodGet {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -361,13 +361,13 @@ func handleRuleProviders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rule_providers, ok := template["rule-providers"].(map[interface{}]interface{})
+	rule_providers, ok := template["rule-providers"].(map[any]any)
 	if !ok {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
-	rule_provider, ok := rule_providers[rule_set_name].(map[interface{}]interface{})
+	rule_provider, ok := rule_providers[rule_set_name].(map[any]any)
 	if !ok {
 		http.Error(w, "Not Found", http.StatusNotFound)
 		return

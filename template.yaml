@@ -225,142 +225,149 @@ rule-providers:
   reject:
     type: http
     behavior: domain
-    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/reject.txt"
+    url: "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/refs/heads/release/reject.txt"
     path: ./ruleset/reject.yaml
     interval: 86400
 
   icloud:
     type: http
     behavior: domain
-    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/icloud.txt"
+    url: "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/refs/heads/release/icloud.txt"
     path: ./ruleset/icloud.yaml
     interval: 86400
 
   apple:
     type: http
     behavior: domain
-    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/apple.txt"
+    url: "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/refs/heads/release/apple.txt"
     path: ./ruleset/apple.yaml
     interval: 86400
 
   google:
     type: http
     behavior: domain
-    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/google.txt"
+    url: "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/refs/heads/release/google.txt"
     path: ./ruleset/google.yaml
     interval: 86400
 
   proxy:
     type: http
     behavior: domain
-    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/proxy.txt"
+    url: "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/refs/heads/release/proxy.txt"
     path: ./ruleset/proxy.yaml
     interval: 86400
 
   direct:
     type: http
     behavior: domain
-    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/direct.txt"
+    url: "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/refs/heads/release/direct.txt"
     path: ./ruleset/direct.yaml
     interval: 86400
 
   private:
     type: http
     behavior: domain
-    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/private.txt"
+    url: "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/refs/heads/release/private.txt"
     path: ./ruleset/private.yaml
     interval: 86400
 
   gfw:
     type: http
     behavior: domain
-    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/gfw.txt"
+    url: "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/refs/heads/release/gfw.txt"
     path: ./ruleset/gfw.yaml
     interval: 86400
 
   greatfire:
     type: http
     behavior: domain
-    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/greatfire.txt"
+    url: "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/refs/heads/release/greatfire.txt"
     path: ./ruleset/greatfire.yaml
     interval: 86400
 
   tld-not-cn:
     type: http
     behavior: domain
-    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/tld-not-cn.txt"
+    url: "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/refs/heads/release/tld-not-cn.txt"
     path: ./ruleset/tld-not-cn.yaml
     interval: 86400
 
   telegramcidr:
     type: http
     behavior: ipcidr
-    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/telegramcidr.txt"
+    url: "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/refs/heads/release/telegramcidr.txt"
     path: ./ruleset/telegramcidr.yaml
     interval: 86400
 
   cncidr:
     type: http
     behavior: ipcidr
-    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/cncidr.txt"
+    url: "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/refs/heads/release/cncidr.txt"
     path: ./ruleset/cncidr.yaml
     interval: 86400
 
   lancidr:
     type: http
     behavior: ipcidr
-    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/lancidr.txt"
+    url: "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/refs/heads/release/lancidr.txt"
     path: ./ruleset/lancidr.yaml
     interval: 86400
 
   applications:
     type: http
     behavior: classical
-    url: "https://jsd.cdn.zzko.cn/gh/Loyalsoldier/clash-rules@release/applications.txt"
+    url: "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/refs/heads/release/applications.txt"
     path: ./ruleset/applications.yaml
     interval: 86400
 
   zju_internal:
     type: http
     behavior: classical
-    url: "/convert?url=https://jsd.cdn.zzko.cn/gh/SubConv/ZJU-Rule/Clash/ZJU.list"
+    url: "/convert?url=https://raw.githubusercontent.com/SubConv/ZJU-Rule/refs/heads/main/Clash/ZJU.list"
     path: ./ruleset/ZJU-Rule_ZJU.yaml
     interval: 86400
 
   scholar:
     type: http
     behavior: classical
-    url: "/convert?url=https://jsd.cdn.zzko.cn/gh/SubConv/ZJU-Rule/Clash/ZJU-More-Scholar.list"
+    url: "/convert?url=https://raw.githubusercontent.com/SubConv/ZJU-Rule/refs/heads/main/Clash/ZJU-More-Scholar.list"
     path: ./ruleset/ZJU-Rule_ZJU-More-Scholar.yaml
     interval: 86400
 
   openai:
     type: http
     behavior: classical
-    url: "/convert?url=https://jsd.cdn.zzko.cn/gh/SubConv/ZJU-Rule/Clash/Ruleset/OpenAi.list"
+    url: "/convert?url=https://raw.githubusercontent.com/SubConv/ZJU-Rule/refs/heads/main/Clash/Ruleset/OpenAi.list"
     path: ./ruleset/ZJU-Rule_OpenAi.yaml
     interval: 86400
 
   chatbot:
     type: http
     behavior: classical
-    url: "/convert?url=https://jsd.cdn.zzko.cn/gh/SubConv/ZJU-Rule/Clash/Ruleset/ChatBot.list"
+    url: "/convert?url=https://raw.githubusercontent.com/SubConv/ZJU-Rule/refs/heads/main/Clash/Ruleset/ChatBot.list"
     path: ./ruleset/ZJU-Rule_ChatBot.yaml
     interval: 86400
 
   ad_domain:
-    behavior: domain
-    interval: 86400
-    path: ./ruleset/ad-domain.yaml
     type: http
-    url: http://s6bcxwvrz.hd-bkt.clouddn.com/ad-domain.yaml
+    behavior: domain
+    url: https://raw.githubusercontent.com/earoftoast/clash-rules/main/AD.yaml
+    path: ./ruleset/ad-domain.yaml
+    interval: 86400
+
+  ad_application:
+    type: http
+    behavior: domain
+    url: https://raw.githubusercontent.com/earoftoast/clash-rules/main/ProgramAD.yaml
+    path: ./ruleset/ad-application.yaml
+    interval: 86400
 
   ad_ipcidr:
-    behavior: ipcidr
-    interval: 86400
-    path: ./ruleset/ad-ip.yaml
     type: http
+    behavior: ipcidr
     url: http://s6bcxwvrz.hd-bkt.clouddn.com/ad-ip.yaml
+    path: ./ruleset/ad-ip.yaml
+    interval: 86400
 
 # script:
 #   shortcuts:
@@ -382,6 +389,9 @@ rules:
   - DOMAIN-SUFFIX,linkedin.com,CHATBOT
   - DOMAIN-SUFFIX,perplexity.ai,CHATBOT
   - DOMAIN-SUFFIX,hf-mirror.com,CNSITE
+  - DOMAIN-SUFFIX,openai-proxy.org,CNSITE
+  - DOMAIN-SUFFIX,openai-proxy.live,CNSITE
+  - DOMAIN-SUFFIX,closeai-proxy.xyz,CNSITE
 
   # allowed safe trackers
   - DOMAIN,hd.mmstat.com,CNSITE

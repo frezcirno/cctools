@@ -1,17 +1,11 @@
 package main
 
 import (
-	"context"
-	"crypto/sha1"
-	"encoding/base64"
-	"errors"
 	"fmt"
-	"io"
 	"log"
 	"math/rand"
 	"net/http"
 	"net/url"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -23,151 +17,6 @@ const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 
 var PROXY_BLACKLIST = []string{"DIRECT", "REJECT", "GLOBAL", "✉️", "有效期", "群", "感谢", "非线路"}
 
-func init() {
-}
-
-type AirportSpec struct {
-	Name          string   `yaml:"name"`
-	Urls          []string `yaml:"urls"`
-	Ttl           int      `yaml:"ttl"`
-	Enabled       bool     `yaml:"enabled"`
-	Tags          []string `yaml:"tags"`
-	UseCacheOnErr bool     `yaml:"use-cache-on-err"`
-}
-
-func (as *AirportSpec) tags() []string {
-	tags := append(as.Tags, as.Name, "all")
-	if as.Enabled {
-		tags = append(tags, "default")
-	}
-	return tags
-}
-
-type Airport struct {
-	Proxies DictList `yaml:"proxies"`
-	Groups  DictList `yaml:"groups"`
-}
-
-func NewAirport() Airport {
-	return Airport{
-		Proxies: DictList{},
-		Groups:  DictList{},
-	}
-}
-
-func (airport *Airport) renameProxy(key string, new_key string) error {
-	// new_key should not exist
-	if airport.Proxies.get(new_key) != nil {
-		return fmt.Errorf("proxy %s already exists", new_key)
-	}
-
-	proxy := airport.Proxies.get(key)
-	if proxy == nil {
-		return fmt.Errorf("proxy %s not found", key)
-	}
-
-	delete(airport.Proxies, key)
-	airport.Proxies.set(new_key, proxy)
-
-	for _, group := range airport.Groups {
-		groupProxies, ok := group["proxies"]
-		if !ok {
-			continue
-		}
-		groupProxiesL := groupProxies.([]interface{})
-		for idx, groupProxy := range groupProxiesL {
-			if groupProxy == key {
-				groupProxiesL[idx] = new_key
-			}
-		}
-	}
-	return nil
-}
-
-func (airport *Airport) renameGroup(key string, new_key string) error {
-	group := airport.Groups.get(key)
-	if group == nil {
-		return fmt.Errorf("group %s not found", key)
-	}
-
-	delete(airport.Groups, key)
-	airport.Groups.set(new_key, group)
-
-	return nil
-}
-
-func (airport *Airport) groupAddProxies(key string, proxies []interface{}) error {
-	// validate proxies
-	for _, proxy := range proxies {
-		if airport.Proxies.get(proxy.(string)) == nil {
-			return fmt.Errorf("proxy %s not found", proxy)
-		}
-	}
-
-	// ensure group
-	group := airport.Groups.get(key)
-	if group == nil {
-		group = YamlStrDict{}
-		airport.Groups.set(key, group)
-	}
-
-	groupProxies, ok := group["proxies"]
-	if !ok {
-		return fmt.Errorf("group %s has no 'proxies'", key)
-	}
-
-	groupProxiesL := groupProxies.([]string)
-
-	// dedup add
-	for _, proxy := range proxies {
-		found := false
-		for _, groupProxy := range groupProxiesL {
-			if groupProxy == proxy {
-				found = true
-				break
-			}
-		}
-		if !found {
-			groupProxiesL = append(groupProxiesL, proxy.(string))
-		}
-	}
-
-	group["proxies"] = groupProxiesL
-	return nil
-}
-
-func (airport *Airport) removeProxy(key string) {
-	delete(airport.Proxies, key)
-
-	for _, group := range airport.Groups {
-		groupProxies, ok := group["proxies"]
-		if !ok {
-			continue
-		}
-		groupProxiesL := groupProxies.([]interface{})
-
-		// avoid memory reallocation
-		k := 0
-		for idx, groupProxy := range groupProxiesL {
-			if groupProxy != key {
-				if k != idx {
-					groupProxiesL[k] = groupProxy
-				}
-				k++
-			}
-		}
-		group["proxies"] = groupProxiesL[:k]
-	}
-}
-
-func (airport *Airport) filterProxy(filter func(YamlStrDict) bool) {
-	for key, proxy := range airport.Proxies {
-		if !filter(proxy) {
-			airport.removeProxy(key)
-		}
-	}
-}
-
 func randomStr(length int) string {
 	var letters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 	b := make([]rune, length)
@@ -175,119 +24,6 @@ func randomStr(length int) string {
 		b[i] = letters[rand.Intn(len(letters))]
 	}
 	return string(b)
-}
-
-func loadFile(path string) ([]byte, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		log.Printf("Failed to open cache: %v", err)
-		return nil, err
-	}
-	defer f.Close()
-
-	content, err := io.ReadAll(f)
-	if err != nil {
-		return nil, err
-	}
-
-	return content, nil
-}
-
-func download(url *url.URL, cache_key string, ttl time.Duration, postprocesser func([]byte) []byte, timeout int, use_cache_on_err bool) ([]byte, error) {
-	if cache_key == "" {
-		cache_key = fmt.Sprintf("%x", sha1.Sum([]byte(url.String())))
-	}
-	save_path := "./cache/" + cache_key
-	log.Printf("Retrieving %s, cache %s", url, save_path)
-	cache_ok := false
-
-	if fi, err := os.Stat(save_path); err == nil {
-		cache_ok = true
-		now := time.Now()
-		ctime := fi.ModTime()
-		if ctime.After(now) {
-			log.Printf("Clock changed, ignoring cache")
-		} else if now.Sub(ctime) < ttl {
-			return loadFile(save_path)
-		}
-	}
-
-	var content []byte
-
-	if url.Scheme == "file" {
-		f, err := os.Open(url.Path)
-		if err != nil {
-			return nil, err
-		}
-		defer f.Close()
-
-		content, err = io.ReadAll(f)
-		if err != nil {
-			return nil, err
-		}
-	} else if url.Scheme == "base64" {
-		var err error
-		content, err = io.ReadAll(base64.NewDecoder(base64.StdEncoding, strings.NewReader(url.Host)))
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
-		defer cancel()
-
-		req, err := http.NewRequestWithContext(ctx, "GET", url.String(), nil)
-		if err != nil {
-			log.Printf("Failed to request %s: %v", url, err)
-			return nil, err
-		}
-		req.Header = http.Header{
-			"User-Agent":                []string{USER_AGENT},
-			"Accept":                    []string{"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"},
-			"Cache-Control":             []string{"no-cache"},
-			"Pragma":                    []string{"no-cache"},
-			"Accept-Language":           []string{"zh-CN,zh;q=0.9"},
-			"Sec-Fetch-Dest":            []string{"document"},
-			"Sec-Fetch-Mode":            []string{"navigate"},
-			"Sec-Fetch-Site":            []string{"none"},
-			"Sec-Fetch-User":            []string{"?1"},
-			"Upgrade-Insecure-Requests": []string{"1"},
-			"sec-ch-ua":                 []string{"\"Google Chrome\";v=\"117\", \"Not;A=Brand\";v=\"8\", \"Chromium\";v=\"117\""},
-			"sec-ch-ua-mobile":          []string{"?0"},
-			"sec-ch-ua-platform":        []string{"\"Windows\""},
-		}
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil || resp.StatusCode != 200 {
-			if cache_ok && use_cache_on_err {
-				return loadFile(save_path)
-			}
-			if err == nil {
-				err = fmt.Errorf("status code %d", resp.StatusCode)
-			}
-			log.Printf("Failed to retrieve %s: %v", url, err)
-			return nil, err
-		}
-
-		content, err = io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-	}
-
-	if postprocesser != nil {
-		content = postprocesser(content)
-	}
-
-	if _, err := os.LookupEnv("DISABLE_CACHE"); !err {
-		os.MkdirAll("./cache", os.ModePerm)
-		if f, err := os.Create(save_path); err == nil {
-			defer f.Close()
-			f.Write(content)
-		}
-	}
-
-	return content, nil
 }
 
 func downloadUpstream(upstream *url.URL, upstream_name string, ttl int, timeout int, use_cache_on_err bool) (*Airport, error) {
@@ -303,14 +39,14 @@ func downloadUpstream(upstream *url.URL, upstream_name string, ttl int, timeout 
 		return nil, err
 	}
 
-	_proxies, ok := obj["proxies"].([]interface{})
+	_proxies, ok := obj["proxies"].([]any)
 	if !ok {
 		err := fmt.Errorf("proxies not found")
 		log.Printf("Failed to parse upstream: %v %v", upstream, err)
 		return nil, err
 	}
 	proxies := NewDictList(_proxies)
-	_groups, ok := obj["proxy-groups"].([]interface{})
+	_groups, ok := obj["proxy-groups"].([]any)
 	if !ok {
 		err := fmt.Errorf("proxy-groups not found")
 		log.Printf("Failed to parse upstream %v: %v", upstream, err)
@@ -366,7 +102,7 @@ func stackAirports(airports []Airport) Airport {
 	for _, airport := range airports {
 		mergeProxies(airport, merged)
 		for key, group := range airport.Groups {
-			merged.groupAddProxies(key, group["proxies"].([]interface{}))
+			merged.groupAddProxies(key, group["proxies"].([]any))
 		}
 	}
 
@@ -381,53 +117,8 @@ func renameUpstreams(airports map[string]Airport) {
 	}
 }
 
-type Platform string
-
-const (
-	Windows Platform = "windows"
-	Linux   Platform = "linux"
-	Android Platform = "android"
-	Darwin  Platform = "darwin"
-	Other   Platform = "other"
-)
-
-type RuleProviderTransform string
-
-const (
-	RPT_NONE   RuleProviderTransform = "none"
-	RPT_PROXY  RuleProviderTransform = "proxy"
-	RPT_INLINE RuleProviderTransform = "inline"
-)
-
-func StringToRuleProviderTransform(s string) (RuleProviderTransform, error) {
-	switch s {
-	case string(RPT_NONE), string(RPT_PROXY), string(RPT_INLINE):
-		return RuleProviderTransform(s), nil
-	default:
-		return RPT_NONE, fmt.Errorf("invalid RuleProviderTransform: %s", s)
-	}
-}
-
-type ExternalControllerType string
-
-const (
-	NONE  ExternalControllerType = ""
-	HTTP  ExternalControllerType = "http"
-	HTTPS ExternalControllerType = "https"
-	UNIX  ExternalControllerType = "unix"
-)
-
-func StringToExternalControllerType(s string) (ExternalControllerType, error) {
-	switch s {
-	case string(NONE), string(HTTP), string(HTTPS), string(UNIX):
-		return ExternalControllerType(s), nil
-	default:
-		return NONE, errors.New("invalid ExternalControllerType")
-	}
-}
-
 type Config struct {
-	Template  map[string]interface{}
+	Template  map[string]any
 	Upstreams map[string]AirportSpec
 
 	Upstream             []string
@@ -525,7 +216,7 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 			"FALLBACK": "FALLBACK",
 			"CNSITE":   "CNSITE",
 		}
-		for _, rule := range tpl_rules.([]interface{}) {
+		for _, rule := range tpl_rules.([]any) {
 			rulesegs := strings.Split(rule.(string), ",")
 			if len(rulesegs) >= 3 {
 				chain := rulesegs[2]
@@ -583,7 +274,7 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 	c.Template["secret"] = c.Secret
 
 	if c.Dns {
-		dns := c.Template["dns"].(map[interface{}]interface{})
+		dns := c.Template["dns"].(map[any]any)
 		dns["enable"] = true
 		dns["listen"] = c.DnsListen
 		dns["enhanced-mode"] = c.EnhancedMode
@@ -591,11 +282,11 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 		dns["default-nameserver"] = c.DefaultNameserver
 		dns["nameserver"] = c.Nameserver
 		dns["fallback"] = c.Fallback
-		dns["nameserver-policy"] = c.NameserverPolicy // .(map[interface{}]interface{})["+.zju.edu.cn"] = dhcpdns
+		dns["nameserver-policy"] = c.NameserverPolicy // .(map[any]any)["+.zju.edu.cn"] = dhcpdns
 	}
 
 	if c.Tun {
-		tun := c.Template["tun"].(map[interface{}]interface{})
+		tun := c.Template["tun"].(map[any]any)
 		tun["enable"] = true
 		tun["stack"] = c.TunStack
 		if c.Platform == Windows {
@@ -621,7 +312,7 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 				if err != nil {
 					continue
 				}
-				airport, err := downloadUpstream(u, fmt.Sprintf("upstream-%s-%d.yaml", _copy.Name, idx), _copy.Ttl, 10, _copy.UseCacheOnErr)
+				airport, err := downloadUpstream(u, fmt.Sprintf("upstream-%s-%d.yaml", _copy.Name, idx), _copy.Ttl, 15, _copy.UseCacheOnErr)
 				if err != nil {
 					continue
 				}
@@ -847,13 +538,13 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 	c.Template["proxy-groups"] = append(instance_selector_groups, instance_urltest_groups...)
 
 	if c.RuleProviderTransform == RPT_INLINE {
-		rule_providers := c.Template["rule-providers"].(map[interface{}]interface{})
+		rule_providers := c.Template["rule-providers"].(map[any]any)
 		delete(c.Template, "rule-providers")
 
 		rule_provider_map := map[string]YamlStrDict{}
 		for rule_set_name, rule_provider := range rule_providers {
 			rule_set_name := rule_set_name.(string)
-			rule_provider := rule_provider.(map[interface{}]interface{})
+			rule_provider := rule_provider.(map[any]any)
 
 			behavior := rule_provider["behavior"].(string)
 			url, err := url.Parse(rule_provider["url"].(string))
@@ -881,7 +572,7 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 		}
 
 		rules := []string{}
-		for _, rule := range c.Template["rules"].([]interface{}) {
+		for _, rule := range c.Template["rules"].([]any) {
 			rule := rule.(string)
 			rule_segs := strings.Split(rule, ",")
 
@@ -902,7 +593,7 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 			rule_action := rule_segs[2]
 			behavior := rule_provider["behavior"].(string)
 
-			for _, pattern := range rule_provider["patterns"].([]interface{}) {
+			for _, pattern := range rule_provider["patterns"].([]any) {
 				pattern := pattern.(string)
 				new_rule := ""
 				if strings.HasPrefix(pattern, "DOMAIN") || strings.HasPrefix(pattern, "IP-CIDR") || behavior == "classical" {
@@ -925,10 +616,10 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 		}
 		c.Template["rules"] = rules
 	} else if c.RuleProviderTransform == RPT_PROXY {
-		rule_providers := c.Template["rule-providers"].(map[interface{}]interface{})
+		rule_providers := c.Template["rule-providers"].(map[any]any)
 		for rule_set_name, rule_provider := range rule_providers {
 			rule_set_name := rule_set_name.(string)
-			rule_provider := rule_provider.(map[interface{}]interface{})
+			rule_provider := rule_provider.(map[any]any)
 
 			proxyUrl := fmt.Sprintf("%s://%s/rule-providers?rule-set=%s", Scheme(r), HostAndPort(r), rule_set_name)
 			rule_provider["url"] = proxyUrl

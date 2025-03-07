@@ -1,12 +1,12 @@
 package main
 
 type (
-	YamlStrDict map[string]interface{}
+	YamlStrDict map[string]any
 )
 
 /**
  * DictList is a map of YamlStrDicts, where the key is the name of the YamlStrDict.
- * It is used to store the list of dictionaries in the YAML file.
+ * It is used to store a list of unique-key dictionaries in the YAML file.
  * Example:
  * {
  *   "dict1": {
@@ -21,10 +21,10 @@ type (
  */
 type DictList map[string]YamlStrDict
 
-func NewDictList(in []interface{}) DictList {
+func NewDictList(in []any) DictList {
 	dl := DictList{}
 	for _, elm := range in {
-		elm := elm.(map[interface{}]interface{})
+		elm := elm.(map[any]any)
 		name := elm["name"].(string)
 		value := YamlStrDict{}
 		for k, v := range elm {
