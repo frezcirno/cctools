@@ -458,17 +458,27 @@
             <div class="form-item">
               <label class="item-label" for="fallback">Fallback</label>
               <textarea class="item-content" rows="4" id="fallback" name="fallback" placeholder="https://1.0.0.1/dns-query,
-https://public.dns.iij.jp/dns-query, 
-https://101.101.101.101/dns-query, 
-https://13800000000.rubyfish.cn/
+https://public.dns.iij.jp/dns-query,
+https://101.101.101.101/dns-query
                 "></textarea>
             </div>
+
+            <!-- fallback-filter.geoip: true/false
+            <div class="form-item">
+              <label class="item-label" for="enhanced_mode">Enhanced Mode</label>
+              <div id="enhanced_mode" class="item-content radio-group">
+                <label class="selectable"><input type="radio" id="enhanced_mode-fake-ip" name="enhanced_mode"
+                    value="fake-ip" checked>fake-ip</label>
+                <label class="selectable"><input type="radio" id="enhanced_mode-redir-host" name="enhanced_mode"
+                    value="redir-host">redir-host</label>
+              </div>
+            </div> -->
 
             <!-- Nameserver-policy: key1:val1, key2:val2 -->
             <div class="form-item">
               <label class="item-label" for="nameserver_policy">Nameserver Policy</label>
               <textarea class="item-content" rows="4" id="nameserver_policy" name="nameserver_policy"
-                placeholder="+.cn: 223.5.5.5; +.zju.edu.cn: 223.5.5.5"></textarea>
+                placeholder="+.cn: 223.5.5.5; geosite:cn: 223.5.5.5; +.zju.edu.cn: 223.5.5.5"></textarea>
             </div>
           </div>
         </div>

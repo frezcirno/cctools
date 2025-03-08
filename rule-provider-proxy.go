@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"time"
 )
 
 func convertRawListToRuleProvider(rawList []byte) []byte {
@@ -30,6 +32,64 @@ func convertRawListToRuleProvider(rawList []byte) []byte {
 	}
 
 	return bytes.Join(rules, []byte("\n"))
+}
+
+func handleRuleProviders(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	query := r.URL.Query()
+	rule_set_name := query.Get("rule-set")
+	if rule_set_name == "" {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+
+	template, err := loadTemplate()
+	if err != nil {
+		log.Printf("Failed to load template: %v\n", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	rule_providers, ok := template["rule-providers"].(map[any]any)
+	if !ok {
+		log.Printf("Failed to load rule-providers: %v\n", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	rule_provider, ok := rule_providers[rule_set_name].(map[any]any)
+	if !ok {
+		http.Error(w, "Not Found", http.StatusNotFound)
+		return
+	}
+
+	ruleUrl, ok := rule_provider["url"].(string)
+	if !ok {
+		log.Printf("Failed to load rule-provider url: %v\n", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	url, err := url.Parse(ruleUrl)
+	if err != nil {
+		log.Printf("Failed to parse rule-provider url: %v\n", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	content, err := download(url, fmt.Sprintf("rule-%s.yaml", rule_set_name), 5*365*24*time.Hour, nil, 10, true)
+	if err != nil {
+		log.Printf("Failed to download rule-provider: %v\n", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/x-yaml")
+	w.Write(content)
 }
 
 func makeProxy() *httputil.ReverseProxy {

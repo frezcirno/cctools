@@ -81,15 +81,10 @@ func download(url *url.URL,
 		}
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil || resp.StatusCode != 200 {
-			if err != nil {
-				resp.Body.Close()
-			}
 			if cache_ok && use_cache_on_err {
 				return fsLoad(save_path)
 			}
-			if err == nil {
-				err = fmt.Errorf("status code %d", resp.StatusCode)
-			}
+			log.Printf("Failed to request %s: %v", url, err)
 			return nil, err
 		}
 		defer resp.Body.Close()
