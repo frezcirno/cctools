@@ -2,14 +2,11 @@ package main
 
 import (
 	"context"
-	"crypto/sha1"
 	"encoding/base64"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 )
@@ -17,29 +14,15 @@ import (
 func download(url *url.URL,
 	cache_key string,
 	ttl time.Duration,
-	postprocesser func([]byte) []byte,
 	timeout int,
 	use_cache_on_err bool,
 ) ([]byte, error) {
 	if cache_key == "" {
-		cache_key = fmt.Sprintf("%x", sha1.Sum([]byte(url.String())))
+		cache_key = make_cache_key(url)
 	}
-	save_path := "./cache/" + cache_key
-	log.Printf("Retrieving %s, cache: %s, ttl: %d, use-cache-on-err: %v", url, save_path, ttl, use_cache_on_err)
-	cache_ok := false
+	cache_ok, _ := cache_is_ok(cache_key, ttl)
 
-	if fi, err := fsStat(save_path); err == nil {
-		now := time.Now()
-		ctime := fi.ModTime()
-		if ctime.After(now) {
-			log.Printf("Clock reverted")
-		} else if now.Sub(ctime) < ttl {
-			log.Printf("Cache hit")
-			return fsLoad(save_path)
-		} else { // expired or ttl == 0
-			cache_ok = true
-		}
-	}
+	log.Printf("Retrieving %s, cache: %s, ttl: %d, use-cache-on-err: %v, cache-ok: %v", url, cache_key, ttl, use_cache_on_err, cache_ok)
 
 	var content []byte
 
@@ -82,7 +65,7 @@ func download(url *url.URL,
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil || resp.StatusCode != 200 {
 			if cache_ok && use_cache_on_err {
-				return fsLoad(save_path)
+				return load_cache(cache_key)
 			}
 			log.Printf("Failed to request %s: %v", url, err)
 			return nil, err
@@ -92,21 +75,9 @@ func download(url *url.URL,
 		content, err = io.ReadAll(resp.Body)
 		if err != nil {
 			if cache_ok && use_cache_on_err {
-				return fsLoad(save_path)
+				return load_cache(cache_key)
 			}
 			return nil, err
-		}
-	}
-
-	if postprocesser != nil {
-		content = postprocesser(content)
-	}
-
-	if _, err := os.LookupEnv("DISABLE_CACHE"); !err {
-		os.MkdirAll("./cache", os.ModePerm)
-		if f, err := os.Create(save_path); err == nil {
-			defer f.Close()
-			f.Write(content)
 		}
 	}
 

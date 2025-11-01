@@ -389,6 +389,7 @@ rules:
   # High level patches
   - DOMAIN-SUFFIX,linkedin.cn,PROXY
   - DOMAIN-SUFFIX,linkedin.com,PROXY
+  - DOMAIN-SUFFIX,live.com,ONEDRIVE
   - DOMAIN-SUFFIX,perplexity.ai,CHATBOT
   - DOMAIN-SUFFIX,openai-proxy.org,CHATBOT
   - DOMAIN-SUFFIX,openai-proxy.live,CHATBOT

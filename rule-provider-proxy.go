@@ -81,7 +81,7 @@ func handleRuleProviders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	content, err := download(url, fmt.Sprintf("rule-%s.yaml", rule_set_name), 5*365*24*time.Hour, nil, 10, true)
+	content, err := download(url, fmt.Sprintf("rule-%s.yaml", rule_set_name), 5*365*24*time.Hour, 10, true)
 	if err != nil {
 		log.Printf("Failed to download rule-provider: %v\n", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)

@@ -26,30 +26,50 @@ func randomStr(length int) string {
 	return string(b)
 }
 
-func downloadUpstream(upstream *url.URL, upstream_name string, ttl int, timeout int, use_cache_on_err bool) (*Airport, error) {
-	content, err := download(upstream, upstream_name, time.Duration(ttl)*time.Second, nil, timeout, use_cache_on_err)
+func downloadUpstream(upstream *url.URL, upstream_name string, ttl_sec int, timeout int, use_cache_on_err bool) (*Airport, error) {
+	ttl := time.Duration(ttl_sec) * time.Second
+	cache_key := make_cache_key(upstream)
+	content, err := download(upstream, upstream_name, ttl, timeout, use_cache_on_err)
 	if err != nil {
-		log.Printf("Failed to retrieve upstream %v: %v", upstream, err)
+		log.Printf("Failed to download upstream %v: %v", upstream, err)
 		return nil, err
 	}
 
+	airport, err := parseUpstream(content)
+	if err != nil {
+		log.Printf("Failed to parse downloaded upstream %v: %v", upstream, err)
+
+		cache_ok, _ := cache_is_ok(cache_key, ttl)
+		if use_cache_on_err && cache_ok {
+			log.Printf("Retry cached upstream for %v", upstream)
+			content, err := load_cache(cache_key)
+			if err == nil {
+				return parseUpstream(content)
+			}
+		}
+
+		return nil, err
+	}
+
+	save_cache(cache_key, content)
+	return airport, nil
+}
+
+func parseUpstream(content []byte) (*Airport, error) {
 	var obj YamlStrDict
 	if err := yaml.Unmarshal(content, &obj); err != nil {
-		log.Printf("Failed to parse upstream %v: %v", upstream, err)
 		return nil, err
 	}
 
 	_proxies, ok := obj["proxies"].([]any)
 	if !ok {
 		err := fmt.Errorf("proxies not found")
-		log.Printf("Failed to parse upstream: %v %v", upstream, err)
 		return nil, err
 	}
 	proxies := NewDictList(_proxies)
 	_groups, ok := obj["proxy-groups"].([]any)
 	if !ok {
 		err := fmt.Errorf("proxy-groups not found")
-		log.Printf("Failed to parse upstream %v: %v", upstream, err)
 		return nil, err
 	}
 	groups := NewDictList(_groups)
@@ -347,7 +367,7 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 			"type":      "url-test",
 			"proxies":   all_proxies.keys(),
 			"url":       "http://www.gstatic.com/generate_204",
-			"interval":  86400,
+			"interval":  300,
 			"tolerance": 100,
 		})
 	}
@@ -380,7 +400,7 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 			"type":      "url-test",
 			"proxies":   _cn,
 			"url":       "http://www.gstatic.com/generate_204",
-			"interval":  86400,
+			"interval":  300,
 			"tolerance": 100,
 		})
 	}
@@ -393,7 +413,7 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 			"type":      "url-test",
 			"proxies":   _tw,
 			"url":       "http://www.gstatic.com/generate_204",
-			"interval":  86400,
+			"interval":  300,
 			"tolerance": 100,
 		})
 	}
@@ -406,7 +426,7 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 			"type":      "url-test",
 			"proxies":   _oversea,
 			"url":       "http://www.gstatic.com/generate_204",
-			"interval":  86400,
+			"interval":  300,
 			"tolerance": 100,
 		})
 	}
@@ -419,7 +439,7 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 			"type":      "url-test",
 			"proxies":   _udp,
 			"url":       "http://www.gstatic.com/generate_204",
-			"interval":  86400,
+			"interval":  300,
 			"tolerance": 100,
 		})
 	}
@@ -436,7 +456,7 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 				"type":      "url-test",
 				"proxies":   airport_proxies_keys,
 				"url":       "http://www.gstatic.com/generate_204",
-				"interval":  86400,
+				"interval":  300,
 				"tolerance": 100,
 			})
 		}
@@ -467,7 +487,7 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 				"type":      "url-test",
 				"proxies":   _cn,
 				"url":       "http://www.gstatic.com/generate_204",
-				"interval":  86400,
+				"interval":  300,
 				"tolerance": 100,
 			})
 		}
@@ -478,7 +498,7 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 				"type":      "url-test",
 				"proxies":   _tw,
 				"url":       "http://www.gstatic.com/generate_204",
-				"interval":  86400,
+				"interval":  300,
 				"tolerance": 100,
 			})
 		}
@@ -489,7 +509,7 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 				"type":      "url-test",
 				"proxies":   _oversea,
 				"url":       "http://www.gstatic.com/generate_204",
-				"interval":  86400,
+				"interval":  300,
 				"tolerance": 100,
 			})
 		}
@@ -500,7 +520,7 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 				"type":      "url-test",
 				"proxies":   _udp,
 				"url":       "http://www.gstatic.com/generate_204",
-				"interval":  86400,
+				"interval":  300,
 				"tolerance": 100,
 			})
 		}
@@ -553,7 +573,7 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 				return nil, err
 			}
 
-			content, err := download(url, fmt.Sprintf("rule-%s.yaml", rule_set_name), 24*time.Hour, nil, 10, true)
+			content, err := download(url, fmt.Sprintf("rule-%s.yaml", rule_set_name), 24*time.Hour, 10, true)
 			if err != nil {
 				log.Printf("Failed to retrieve rule provider: %v", err)
 				return nil, err
