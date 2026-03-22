@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v2"
@@ -61,18 +62,16 @@ func parseUpstream(content []byte) (*Airport, error) {
 		return nil, err
 	}
 
-	_proxies, ok := obj["proxies"].([]any)
-	if !ok {
-		err := fmt.Errorf("proxies not found")
-		return nil, err
+	proxyRaw, err := asAnyList(obj["proxies"], "proxies")
+	if err != nil {
+		return nil, fmt.Errorf("proxies not found")
 	}
-	proxies := NewDictList(_proxies)
-	_groups, ok := obj["proxy-groups"].([]any)
-	if !ok {
-		err := fmt.Errorf("proxy-groups not found")
-		return nil, err
+	proxies := NewDictList(proxyRaw)
+	groupRaw, err := asAnyList(obj["proxy-groups"], "proxy-groups")
+	if err != nil {
+		return nil, fmt.Errorf("proxy-groups not found")
 	}
-	groups := NewDictList(_groups)
+	groups := NewDictList(groupRaw)
 
 	airport := Airport{proxies, groups}
 
@@ -122,14 +121,16 @@ func stackAirports(airports []Airport) Airport {
 	for _, airport := range airports {
 		mergeProxies(airport, merged)
 		for key, group := range airport.Groups {
-			merged.groupAddProxies(key, group["proxies"].([]any))
+			if err := merged.groupAddProxies(key, group["proxies"]); err != nil {
+				log.Printf("Failed to merge proxies for group %s: %v", key, err)
+			}
 		}
 	}
 
 	return merged
 }
 
-func renameUpstreams(airports map[string]Airport) {
+func resolveAirportNameConflicts(airports map[string]Airport) {
 	merged := NewAirport()
 	for _, airport := range airports {
 		mergeProxies(airport, merged)
@@ -146,20 +147,20 @@ type Config struct {
 	TopSelect            []string
 	KeepUpstreamSelector bool
 
-	PortProxy bool
-	Bind      string
-	HttpPort  int
-	SocksPort int
-	MixedPort int
+	PortProxy   bool
+	BindAddress string
+	HttpPort    int
+	SocksPort   int
+	MixedPort   int
 
 	TransProxy bool
 	RedirPort  int
 	TproxyPort int
 
-	AllowLan               bool
-	ExternalControllerType ExternalControllerType
-	ExternalControllerAddr string
-	Secret                 string
+	AllowLan                 bool
+	ExternalControllerType   ExternalControllerType
+	ExternalControllerAddr   string
+	ExternalControllerSecret string
 
 	Dns               bool
 	DnsListen         string
@@ -171,6 +172,7 @@ type Config struct {
 
 	Tun      bool
 	TunStack string
+	LogLevel string
 
 	RuleProviderTransform RuleProviderTransform
 	CustomRules           []string
@@ -182,23 +184,19 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("need upstreams")
 	}
 
-	// for _, upstream := range config.Upstream {
-	// 	if _, ok := config.AllUpstream[upstream]; !ok {
-	// 		return fmt.Errorf("Upstream %s not found", upstream)
-	// 	}
-	// }
-
 	return nil
 }
 
-func (c *Config) upstreams() []AirportSpec {
-	// select all upstreams matching tags
+func (c *Config) selectedUpstreams() []AirportSpec {
 	selected := []AirportSpec{}
 	userTags := c.Upstream
 	if len(userTags) == 0 {
 		userTags = []string{"default"}
 	}
 	for _, upstream := range c.Upstreams {
+		if !upstream.enabled() {
+			continue
+		}
 		matched := false
 		for _, userTag := range userTags {
 			for _, upstreamTag := range upstream.tags() {
@@ -216,7 +214,7 @@ func (c *Config) upstreams() []AirportSpec {
 	return selected
 }
 
-func (c *Config) contains_group(key string) bool {
+func (c *Config) hasOrganizerGroup(key string) bool {
 	for _, group := range c.Organizer {
 		if group == key {
 			return true
@@ -226,33 +224,147 @@ func (c *Config) contains_group(key string) bool {
 }
 
 func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
+	templateCopy, err := deepCopyTemplate(c.Template)
+	if err != nil {
+		return nil, err
+	}
+
+	cfg := *c
+	cfg.Template = templateCopy
+
+	allSelectors := cfg.collectSelectors()
+
+	if err := cfg.applyBaseTemplateOptions(); err != nil {
+		return nil, err
+	}
+	if err := cfg.applyDNSOptions(); err != nil {
+		return nil, err
+	}
+	if err := cfg.applyTunOptions(); err != nil {
+		return nil, err
+	}
+
+	airports := cfg.fetchAirports()
+	resolveAirportNameConflicts(airports)
+	allProxies := collectAllProxies(airports)
+	cfg.Template["proxies"] = allProxies.values()
+	cfg.Template["proxy-groups"] = cfg.buildProxyGroups(airports, allProxies, allSelectors)
+
+	if err := cfg.transformRuleProviders(r); err != nil {
+		return nil, err
+	}
+
+	return cfg.Template, nil
+}
+
+func (c *Config) collectSelectors() []string {
+	tplRulesRaw, ok := c.Template["rules"]
+	if !ok {
+		return []string{"PROXY", "UDP", "FALLBACK", "CNSITE"}
+	}
+	ruleItems, err := asAnyList(tplRulesRaw, "rules")
+	if err != nil {
+		return []string{"PROXY", "UDP", "FALLBACK", "CNSITE"}
+	}
+
+	presetChains := map[string]struct{}{
+		"DIRECT":   {},
+		"REJECT":   {},
+		"PROXY":    {},
+		"UDP":      {},
+		"FALLBACK": {},
+		"CNSITE":   {},
+	}
 	customSelectors := []string{}
-	if tpl_rules, ok := c.Template["rules"]; ok {
-		presetChains := map[string]string{
-			"DIRECT":   "DIRECT",
-			"REJECT":   "REJECT",
-			"PROXY":    "PROXY",
-			"UDP":      "UDP",
-			"FALLBACK": "FALLBACK",
-			"CNSITE":   "CNSITE",
+	for _, ruleItem := range ruleItems {
+		rule, ok := ruleItem.(string)
+		if !ok {
+			continue
 		}
-		for _, rule := range tpl_rules.([]any) {
-			rulesegs := strings.Split(rule.(string), ",")
-			if len(rulesegs) >= 3 {
-				chain := rulesegs[2]
-				if _, ok := presetChains[chain]; !ok {
-					presetChains[chain] = chain
-					customSelectors = append(customSelectors, chain)
-				}
-			}
+		chain, ok := extractRuleTarget(rule)
+		if !ok {
+			continue
+		}
+		if _, exists := presetChains[chain]; exists {
+			continue
+		}
+		presetChains[chain] = struct{}{}
+		customSelectors = append(customSelectors, chain)
+	}
+
+	return append(append([]string{"PROXY"}, customSelectors...), "UDP", "FALLBACK", "CNSITE")
+}
+
+func extractRuleTarget(rule string) (string, bool) {
+	parts := splitRuleSegments(rule)
+	if len(parts) < 2 {
+		return "", false
+	}
+
+	targetIndex, ok := ruleTargetIndex(parts)
+	if !ok || targetIndex >= len(parts) {
+		return "", false
+	}
+
+	target := strings.TrimSpace(parts[targetIndex])
+	if target == "" {
+		return "", false
+	}
+	return target, true
+}
+
+func splitRuleSegments(rule string) []string {
+	rawParts := strings.Split(rule, ",")
+	parts := make([]string, 0, len(rawParts))
+	for _, part := range rawParts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			parts = append(parts, trimmed)
 		}
 	}
-	// reorder
-	allSelectors := append(append([]string{"PROXY"}, customSelectors...), "UDP", "FALLBACK", "CNSITE")
+	return parts
+}
 
+func ruleTargetIndex(parts []string) (int, bool) {
+	if len(parts) < 2 {
+		return 0, false
+	}
+
+	ruleType := strings.ToUpper(parts[0])
+	switch ruleType {
+	case "MATCH", "FINAL":
+		return 1, true
+	case "RULE-SET", "RULE-SET-IPCIDR", "GEOSITE", "GEOIP", "IP-ASN", "IP-CIDR", "IP-CIDR6", "SRC-IP-CIDR", "SRC-PORT", "DST-PORT", "IN-TYPE", "IN-PORT", "IN-USER", "IN-NAME", "PROCESS-NAME", "PROCESS-PATH", "DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "DOMAIN-REGEX", "URL-REGEX", "USER-AGENT", "NETWORK", "DSCP":
+		if len(parts) >= 3 {
+			return 2, true
+		}
+		return 0, false
+	case "AND", "OR":
+		if len(parts) >= 2 {
+			return len(parts) - 1, true
+		}
+		return 0, false
+	case "NOT":
+		if len(parts) >= 3 {
+			return len(parts) - 1, true
+		}
+		return 0, false
+	default:
+		if len(parts) >= 3 {
+			return len(parts) - 1, true
+		}
+		if len(parts) == 2 {
+			return 1, true
+		}
+		return 0, false
+	}
+}
+
+func (c *Config) applyBaseTemplateOptions() error {
+	log.Printf("Applying base template options: port_proxy=%t trans_proxy=%t external_controller=%s", c.PortProxy, c.TransProxy, c.ExternalControllerType)
 	if c.PortProxy {
 		c.Template["allow-lan"] = c.AllowLan
-		c.Template["bind-address"] = c.Bind
+		c.Template["bind-address"] = c.BindAddress
 
 		if c.HttpPort != 0 {
 			c.Template["port"] = c.HttpPort
@@ -272,7 +384,6 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 		if c.TproxyPort == 0 {
 			c.TproxyPort = 7894
 		}
-
 		if c.RedirPort != 0 {
 			c.Template["redir-port"] = c.RedirPort
 		}
@@ -282,371 +393,402 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 	}
 
 	if c.ExternalControllerType != NONE {
-		if c.ExternalControllerType == HTTP {
+		switch c.ExternalControllerType {
+		case HTTP:
 			c.Template["external-controller"] = c.ExternalControllerAddr
-		} else if c.ExternalControllerType == HTTPS {
+		case HTTPS:
 			c.Template["external-controller-tls"] = c.ExternalControllerAddr
-		} else if c.ExternalControllerType == UNIX {
+		case UNIX:
 			c.Template["external-controller-unix"] = c.ExternalControllerAddr
 		}
 	}
 
-	c.Template["secret"] = c.Secret
+	c.Template["secret"] = c.ExternalControllerSecret
+	if c.LogLevel != "" {
+		c.Template["log-level"] = c.LogLevel
+	}
+	return nil
+}
 
-	if c.Dns {
-		dns := c.Template["dns"].(map[any]any)
-		dns["enable"] = true
-		dns["listen"] = c.DnsListen
-		dns["enhanced-mode"] = c.EnhancedMode
+func (c *Config) applyDNSOptions() error {
+	if !c.Dns {
+		return nil
+	}
+	log.Printf("Applying DNS options: listen=%s enhanced_mode=%s nameservers=%d fallback=%d", c.DnsListen, c.EnhancedMode, len(c.Nameserver), len(c.Fallback))
 
-		dns["default-nameserver"] = c.DefaultNameserver
-		dns["nameserver"] = c.Nameserver
-		dns["fallback"] = c.Fallback
-		dns["nameserver-policy"] = c.NameserverPolicy // .(map[any]any)["+.zju.edu.cn"] = dhcpdns
+	dns, err := asStringAnyMapField(c.Template, "dns")
+	if err != nil {
+		return err
 	}
 
-	if c.Tun {
-		tun := c.Template["tun"].(map[any]any)
-		tun["enable"] = true
-		tun["stack"] = c.TunStack
-		if c.Platform == Windows {
-			tun["auto-redir"] = false
-		}
+	dns["enable"] = true
+	dns["listen"] = c.DnsListen
+	dns["enhanced-mode"] = c.EnhancedMode
+	dns["default-nameserver"] = c.DefaultNameserver
+	dns["nameserver"] = c.Nameserver
+	dns["fallback"] = c.Fallback
+	dns["nameserver-policy"] = c.NameserverPolicy
+	c.Template["dns"] = dns
+	return nil
+}
+
+func (c *Config) applyTunOptions() error {
+	if !c.Tun {
+		return nil
+	}
+	log.Printf("Applying TUN options: stack=%s platform=%s", c.TunStack, c.Platform)
+
+	tun, err := asStringAnyMapField(c.Template, "tun")
+	if err != nil {
+		return err
 	}
 
-	// retrieve upstream yamls
+	tun["enable"] = true
+	tun["stack"] = c.TunStack
+	if c.Platform == Windows {
+		tun["auto-redir"] = false
+	}
+	c.Template["tun"] = tun
+	return nil
+}
+
+func (c *Config) fetchAirports() map[string]Airport {
+	log.Printf("Fetching airports for upstream selectors: %v", c.Upstream)
 	type pair struct {
 		k string
 		v Airport
 	}
+
 	airports := map[string]Airport{}
-	_upstreams := c.upstreams()
-	ch := make(chan pair, len(_upstreams))
-	defer close(ch)
-	for _, upstream := range _upstreams {
-		_copy := upstream
+	selectedUpstreams := c.selectedUpstreams()
+	ch := make(chan pair, len(selectedUpstreams))
+
+	const maxConcurrent = 8
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+
+	for _, upstream := range selectedUpstreams {
+		upstreamCopy := upstream
+		log.Printf("Scheduling upstream fetch: name=%s urls=%d ttl=%d cache_on_err=%t", upstreamCopy.Name, len(upstreamCopy.Urls), upstreamCopy.Ttl, upstreamCopy.UseCacheOnErr)
+		wg.Add(1)
 		go func() {
-			airports := []Airport{}
-			for idx, _url := range _copy.Urls {
-				u, err := url.Parse(_url)
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			resolvedAirports := []Airport{}
+			for idx, rawURL := range upstreamCopy.Urls {
+				parsedURL, err := url.Parse(rawURL)
 				if err != nil {
+					log.Printf("Skipping invalid upstream URL: upstream=%s index=%d err=%v", upstreamCopy.Name, idx, err)
 					continue
 				}
-				airport, err := downloadUpstream(u, fmt.Sprintf("upstream-%s-%d.yaml", _copy.Name, idx), _copy.Ttl, 15, _copy.UseCacheOnErr)
+				airport, err := downloadUpstream(parsedURL, fmt.Sprintf("upstream-%s-%d.yaml", upstreamCopy.Name, idx), upstreamCopy.Ttl, 15, upstreamCopy.UseCacheOnErr)
 				if err != nil {
+					log.Printf("Failed upstream URL: upstream=%s index=%d err=%v", upstreamCopy.Name, idx, err)
 					continue
 				}
-				airports = append(airports, *airport)
+				resolvedAirports = append(resolvedAirports, *airport)
 			}
-			ch <- pair{_copy.Name, stackAirports(airports)}
+			mergedAirport := stackAirports(resolvedAirports)
+			log.Printf("Finished upstream fetch: name=%s resolved_variants=%d merged_proxies=%d merged_groups=%d", upstreamCopy.Name, len(resolvedAirports), len(mergedAirport.Proxies), len(mergedAirport.Groups))
+			ch <- pair{upstreamCopy.Name, mergedAirport}
 		}()
 	}
-	for range _upstreams {
-		p := <-ch
+
+	go func() {
+		wg.Wait()
+		close(ch)
+	}()
+
+	for p := range ch {
 		airports[p.k] = p.v
 	}
 
-	// rename streams to avoid name crash
-	renameUpstreams(airports)
+	log.Printf("Fetched upstream set: count=%d", len(airports))
+	return airports
+}
 
-	// proxies
-	all_proxies := DictList{}
+func collectAllProxies(airports map[string]Airport) DictList {
+	allProxies := DictList{}
 	for _, airport := range airports {
-		all_proxies.update(airport.Proxies)
+		allProxies.update(airport.Proxies)
 	}
-	c.Template["proxies"] = all_proxies.values()
+	return allProxies
+}
 
-	// groups
-	instance_urltest_groups := []YamlStrDict{}
+func (c *Config) buildProxyGroups(airports map[string]Airport, allProxies DictList, allSelectors []string) []YamlStrDict {
+	log.Printf("Building proxy groups: selectors=%d airports=%d proxies=%d", len(allSelectors)+len(c.TopSelect), len(airports), len(allProxies))
+	instanceURLTestGroups := []YamlStrDict{}
+	groupKey := "all"
 
-	key := "all"
-
-	if len(all_proxies) > 0 {
-		instance_urltest_groups = append(instance_urltest_groups, YamlStrDict{
-			"name":      key,
-			"type":      "url-test",
-			"proxies":   all_proxies.keys(),
-			"url":       "http://www.gstatic.com/generate_204",
-			"interval":  300,
-			"tolerance": 100,
-		})
+	if len(allProxies) > 0 {
+		instanceURLTestGroups = append(instanceURLTestGroups, makeURLTestGroup(groupKey, allProxies.keys()))
 	}
 
-	_cn := []string{}
-	_tw := []string{}
-	_oversea := []string{}
-	_udp := []string{}
-
-	for _, proxy := range all_proxies {
-		if isCN(proxy) {
-			_cn = append(_cn, proxy["name"].(string))
-		}
-		if isTW(proxy) {
-			_tw = append(_tw, proxy["name"].(string))
-		}
-		if isOversea(proxy) {
-			_oversea = append(_oversea, proxy["name"].(string))
-		}
-		if isUDP(proxy) {
-			_udp = append(_udp, proxy["name"].(string))
-		}
-	}
-
-	if c.contains_group("cn") && len(_cn) > 0 {
-		sort.Strings(_cn)
-
-		instance_urltest_groups = append(instance_urltest_groups, YamlStrDict{
-			"name":      fmt.Sprintf("%s-cn", key),
-			"type":      "url-test",
-			"proxies":   _cn,
-			"url":       "http://www.gstatic.com/generate_204",
-			"interval":  300,
-			"tolerance": 100,
-		})
-	}
-
-	if c.contains_group("tw") && len(_tw) > 0 {
-		sort.Strings(_tw)
-
-		instance_urltest_groups = append(instance_urltest_groups, YamlStrDict{
-			"name":      fmt.Sprintf("%s-tw", key),
-			"type":      "url-test",
-			"proxies":   _tw,
-			"url":       "http://www.gstatic.com/generate_204",
-			"interval":  300,
-			"tolerance": 100,
-		})
-	}
-
-	if c.contains_group("oversea") && len(_oversea) > 0 {
-		sort.Strings(_oversea)
-
-		instance_urltest_groups = append(instance_urltest_groups, YamlStrDict{
-			"name":      fmt.Sprintf("%s-oversea", key),
-			"type":      "url-test",
-			"proxies":   _oversea,
-			"url":       "http://www.gstatic.com/generate_204",
-			"interval":  300,
-			"tolerance": 100,
-		})
-	}
-
-	if c.contains_group("udp") && len(_udp) > 0 {
-		sort.Strings(_udp)
-
-		instance_urltest_groups = append(instance_urltest_groups, YamlStrDict{
-			"name":      fmt.Sprintf("%s-udp", key),
-			"type":      "url-test",
-			"proxies":   _udp,
-			"url":       "http://www.gstatic.com/generate_204",
-			"interval":  300,
-			"tolerance": 100,
-		})
-	}
+	instanceURLTestGroups = append(instanceURLTestGroups, c.buildOrganizerGroups(groupKey, allProxies)...)
 
 	for name, airport := range airports {
-		airport_proxies := airport.Proxies
-
-		if len(airport.Proxies) > 0 {
-			airport_proxies_keys := airport_proxies.keys()
-			sort.Strings(airport_proxies_keys)
-
-			instance_urltest_groups = append(instance_urltest_groups, YamlStrDict{
-				"name":      name,
-				"type":      "url-test",
-				"proxies":   airport_proxies_keys,
-				"url":       "http://www.gstatic.com/generate_204",
-				"interval":  300,
-				"tolerance": 100,
-			})
+		airportProxies := airport.Proxies
+		if len(airportProxies) > 0 {
+			airportProxyKeys := airportProxies.keys()
+			sort.Strings(airportProxyKeys)
+			instanceURLTestGroups = append(instanceURLTestGroups, makeURLTestGroup(name, airportProxyKeys))
 		}
-
-		_cn := []string{}
-		_tw := []string{}
-		_oversea := []string{}
-		_udp := []string{}
-
-		for _, proxy := range airport_proxies {
-			if isCN(proxy) {
-				_cn = append(_cn, proxy["name"].(string))
-			}
-			if isTW(proxy) {
-				_tw = append(_tw, proxy["name"].(string))
-			}
-			if isOversea(proxy) {
-				_oversea = append(_oversea, proxy["name"].(string))
-			}
-			if isUDP(proxy) {
-				_udp = append(_udp, proxy["name"].(string))
-			}
-		}
-
-		if c.contains_group("cn") && len(_cn) > 0 {
-			instance_urltest_groups = append(instance_urltest_groups, YamlStrDict{
-				"name":      fmt.Sprintf("%s-cn", name),
-				"type":      "url-test",
-				"proxies":   _cn,
-				"url":       "http://www.gstatic.com/generate_204",
-				"interval":  300,
-				"tolerance": 100,
-			})
-		}
-
-		if c.contains_group("tw") && len(_tw) > 0 {
-			instance_urltest_groups = append(instance_urltest_groups, YamlStrDict{
-				"name":      fmt.Sprintf("%s-tw", name),
-				"type":      "url-test",
-				"proxies":   _tw,
-				"url":       "http://www.gstatic.com/generate_204",
-				"interval":  300,
-				"tolerance": 100,
-			})
-		}
-
-		if c.contains_group("oversea") && len(_oversea) > 0 {
-			instance_urltest_groups = append(instance_urltest_groups, YamlStrDict{
-				"name":      fmt.Sprintf("%s-oversea", name),
-				"type":      "url-test",
-				"proxies":   _oversea,
-				"url":       "http://www.gstatic.com/generate_204",
-				"interval":  300,
-				"tolerance": 100,
-			})
-		}
-
-		if c.contains_group("udp") && len(_udp) > 0 {
-			instance_urltest_groups = append(instance_urltest_groups, YamlStrDict{
-				"name":      fmt.Sprintf("%s-udp", name),
-				"type":      "url-test",
-				"proxies":   _udp,
-				"url":       "http://www.gstatic.com/generate_204",
-				"interval":  300,
-				"tolerance": 100,
-			})
-		}
+		instanceURLTestGroups = append(instanceURLTestGroups, c.buildOrganizerGroups(name, airportProxies)...)
 	}
 
-	// selector groups
-	instance_groups_keys := []string{}
-	for _, g := range instance_urltest_groups {
-		instance_groups_keys = append(instance_groups_keys, g["name"].(string))
+	instanceGroupKeys := []string{}
+	for _, g := range instanceURLTestGroups {
+		groupName, err := asString(g["name"], "proxy-group.name")
+		if err != nil {
+			continue
+		}
+		instanceGroupKeys = append(instanceGroupKeys, groupName)
 	}
-	instance_selector_groups := []YamlStrDict{}
+
+	instanceSelectorGroups := []YamlStrDict{}
 	for _, selector := range append(allSelectors, c.TopSelect...) {
-		var _p []string
-
-		if selector == "PROXY" {
-			_p = append(instance_groups_keys, "DIRECT")
-		} else if selector == "FALLBACK" {
-			_p = []string{"PROXY", "DIRECT"}
-		} else if selector == "CNSITE" {
-			_p = []string{"DIRECT", "PROXY"}
-		} else if selector == "UDP" {
-			_p = []string{"PROXY", "DIRECT"}
-		} else {
-			_p = append([]string{"PROXY"}, instance_groups_keys...)
-			_p = append(_p, "DIRECT")
-		}
-
-		instance_selector_groups = append(instance_selector_groups, YamlStrDict{
+		instanceSelectorGroups = append(instanceSelectorGroups, YamlStrDict{
 			"name":    selector,
 			"type":    "select",
-			"proxies": _p,
+			"proxies": selectorProxies(selector, instanceGroupKeys),
 		})
 	}
 
-	c.Template["proxy-groups"] = append(instance_selector_groups, instance_urltest_groups...)
+	return append(instanceSelectorGroups, instanceURLTestGroups...)
+}
 
+func makeURLTestGroup(name string, proxies []string) YamlStrDict {
+	return YamlStrDict{
+		"name":      name,
+		"type":      "url-test",
+		"proxies":   proxies,
+		"url":       "http://www.gstatic.com/generate_204",
+		"interval":  300,
+		"tolerance": 100,
+	}
+}
+
+func (c *Config) buildOrganizerGroups(prefix string, proxies DictList) []YamlStrDict {
+	groups := []YamlStrDict{}
+	classified := classifyProxies(proxies, organizerClassifiers)
+
+	for _, organizer := range organizerClassifiers {
+		matched := classified[organizer.name]
+		if !c.hasOrganizerGroup(organizer.name) || len(matched) == 0 {
+			continue
+		}
+		sort.Strings(matched)
+		groups = append(groups, makeURLTestGroup(fmt.Sprintf("%s-%s", prefix, organizer.name), matched))
+	}
+
+	return groups
+}
+
+func classifyProxies(proxies DictList, classifiers []struct {
+	name    string
+	matcher func(YamlStrDict) bool
+}) map[string][]string {
+	classified := make(map[string][]string, len(classifiers))
+	for _, classifier := range classifiers {
+		classified[classifier.name] = []string{}
+	}
+	for _, proxy := range proxies {
+		name, err := asString(proxy["name"], "proxy.name")
+		if err != nil {
+			continue
+		}
+		for _, classifier := range classifiers {
+			if classifier.matcher(proxy) {
+				classified[classifier.name] = append(classified[classifier.name], name)
+			}
+		}
+	}
+	return classified
+}
+
+func selectorProxies(selector string, groupKeys []string) []string {
+	switch selector {
+	case "PROXY":
+		return append(groupKeys, "DIRECT")
+	case "FALLBACK":
+		return []string{"PROXY", "DIRECT"}
+	case "CNSITE":
+		return []string{"DIRECT", "PROXY"}
+	case "UDP":
+		return []string{"PROXY", "DIRECT"}
+	default:
+		proxies := append([]string{"PROXY"}, groupKeys...)
+		return append(proxies, "DIRECT")
+	}
+}
+
+func (c *Config) transformRuleProviders(r *http.Request) error {
+	log.Printf("Transforming rule providers with mode=%s", c.RuleProviderTransform)
 	if c.RuleProviderTransform == RPT_INLINE {
-		rule_providers := c.Template["rule-providers"].(map[any]any)
-		delete(c.Template, "rule-providers")
+		return c.inlineRuleProviders()
+	}
+	if c.RuleProviderTransform == RPT_PROXY {
+		return c.proxyRuleProviders(r)
+	}
+	return nil
+}
 
-		rule_provider_map := map[string]YamlStrDict{}
-		for rule_set_name, rule_provider := range rule_providers {
-			rule_set_name := rule_set_name.(string)
-			rule_provider := rule_provider.(map[any]any)
+func (c *Config) inlineRuleProviders() error {
+	ruleProviders, err := asStringAnyMapField(c.Template, "rule-providers")
+	if err != nil {
+		return err
+	}
+	delete(c.Template, "rule-providers")
 
-			behavior := rule_provider["behavior"].(string)
-			url, err := url.Parse(rule_provider["url"].(string))
-			if err != nil {
-				log.Printf("Failed to parse rule provider url: %v", err)
-				return nil, err
-			}
-
-			content, err := download(url, fmt.Sprintf("rule-%s.yaml", rule_set_name), 24*time.Hour, 10, true)
-			if err != nil {
-				log.Printf("Failed to retrieve rule provider: %v", err)
-				return nil, err
-			}
-
-			if err := yaml.Unmarshal(content, &rule_provider); err != nil {
-				log.Printf("Failed to parse rule provider: %v", err)
-				return nil, err
-			}
-
-			rule_provider_map[rule_set_name] = YamlStrDict{
-				"name":     rule_set_name,
-				"behavior": behavior,
-				"patterns": rule_provider["payload"],
-			}
+	ruleProviderMap := map[string]YamlStrDict{}
+	for ruleSetName, ruleProviderRaw := range ruleProviders {
+		ruleProvider, err := asStringAnyMap(ruleProviderRaw, fmt.Sprintf("rule-providers.%s", ruleSetName))
+		if err != nil {
+			return err
 		}
 
-		rules := []string{}
-		for _, rule := range c.Template["rules"].([]any) {
-			rule := rule.(string)
-			rule_segs := strings.Split(rule, ",")
-
-			if len(rule_segs) < 2 {
-				continue
-			}
-			if rule_segs[0] != "RULE-SET" {
-				rules = append(rules, rule)
-				continue
-			}
-
-			rule_set_name := rule_segs[1]
-			rule_provider, ok := rule_provider_map[rule_set_name]
-			if !ok {
-				continue
-			}
-
-			rule_action := rule_segs[2]
-			behavior := rule_provider["behavior"].(string)
-
-			for _, pattern := range rule_provider["patterns"].([]any) {
-				pattern := pattern.(string)
-				new_rule := ""
-				if strings.HasPrefix(pattern, "DOMAIN") || strings.HasPrefix(pattern, "IP-CIDR") || behavior == "classical" {
-					if strings.Contains(pattern, ",no-resolve") {
-						pattern = strings.Replace(pattern, ",no-resolve", "", 1)
-						new_rule = fmt.Sprintf("%s,%s,no-resolve", pattern, rule_action)
-					} else {
-						new_rule = fmt.Sprintf("%s,%s", pattern, rule_action)
-					}
-				} else if behavior == "domain" {
-					new_rule = fmt.Sprintf("DOMAIN,%s,%s", pattern, rule_action)
-				} else if behavior == "ipcidr" {
-					new_rule = fmt.Sprintf("IP-CIDR,%s,%s", pattern, rule_action)
-				} else {
-					log.Printf("Unknown behavior: %s", behavior)
-					continue
-				}
-				rules = append(rules, new_rule)
-			}
+		behavior, err := asString(ruleProvider["behavior"], fmt.Sprintf("rule-providers.%s.behavior", ruleSetName))
+		if err != nil {
+			return err
 		}
-		c.Template["rules"] = rules
-	} else if c.RuleProviderTransform == RPT_PROXY {
-		rule_providers := c.Template["rule-providers"].(map[any]any)
-		for rule_set_name, rule_provider := range rule_providers {
-			rule_set_name := rule_set_name.(string)
-			rule_provider := rule_provider.(map[any]any)
+		ruleProviderURL, err := asString(ruleProvider["url"], fmt.Sprintf("rule-providers.%s.url", ruleSetName))
+		if err != nil {
+			return err
+		}
+		url, err := url.Parse(ruleProviderURL)
+		if err != nil {
+			log.Printf("Failed to parse rule provider url: %v", err)
+			return err
+		}
 
-			proxyUrl := fmt.Sprintf("%s://%s/rule-providers?rule-set=%s", Scheme(r), HostAndPort(r), rule_set_name)
-			rule_provider["url"] = proxyUrl
+		content, err := download(url, fmt.Sprintf("rule-%s.yaml", ruleSetName), 24*time.Hour, 10, true)
+		if err != nil {
+			log.Printf("Failed to retrieve rule provider: %v", err)
+			return err
+		}
+
+		if err := yaml.Unmarshal(content, &ruleProvider); err != nil {
+			log.Printf("Failed to parse rule provider: %v", err)
+			return err
+		}
+
+		ruleProviderMap[ruleSetName] = YamlStrDict{
+			"name":     ruleSetName,
+			"behavior": behavior,
+			"patterns": ruleProvider["payload"],
 		}
 	}
 
-	return c.Template, nil
+	rules := []string{}
+	rulesRaw, ok := c.Template["rules"]
+	if !ok {
+		return fmt.Errorf("rules config not found in template")
+	}
+	rulesList, err := asAnyList(rulesRaw, "rules")
+	if err != nil {
+		return err
+	}
+	for _, ruleItem := range rulesList {
+		rule, ok := ruleItem.(string)
+		if !ok {
+			continue
+		}
+		rule_segs := strings.Split(rule, ",")
+
+		if len(rule_segs) < 2 {
+			continue
+		}
+		if rule_segs[0] != "RULE-SET" {
+			rules = append(rules, rule)
+			continue
+		}
+
+		ruleSetName := rule_segs[1]
+		ruleProvider, ok := ruleProviderMap[ruleSetName]
+		if !ok {
+			continue
+		}
+
+		rule_action := rule_segs[2]
+		behavior, err := asString(ruleProvider["behavior"], fmt.Sprintf("rule-providers.%s.behavior", ruleSetName))
+		if err != nil {
+			return err
+		}
+		patterns, err := asStringList(ruleProvider["patterns"], fmt.Sprintf("rule-providers.%s.patterns", ruleSetName))
+		if err != nil {
+			return err
+		}
+
+		expandedRules, err := expandRuleSetPatterns(behavior, patterns, rule_action)
+		if err != nil {
+			return err
+		}
+		rules = append(rules, expandedRules...)
+	}
+	c.Template["rules"] = rules
+	return nil
+}
+
+func expandRuleSetPatterns(behavior string, patterns []string, ruleAction string) ([]string, error) {
+	rules := make([]string, 0, len(patterns))
+	for _, pattern := range patterns {
+		newRule := ""
+		switch {
+		case strings.HasPrefix(pattern, "DOMAIN"), strings.HasPrefix(pattern, "IP-CIDR"), behavior == "classical":
+			if strings.Contains(pattern, ",no-resolve") {
+				pattern = strings.Replace(pattern, ",no-resolve", "", 1)
+				newRule = fmt.Sprintf("%s,%s,no-resolve", pattern, ruleAction)
+			} else {
+				newRule = fmt.Sprintf("%s,%s", pattern, ruleAction)
+			}
+		case behavior == "domain":
+			newRule = fmt.Sprintf("DOMAIN,%s,%s", pattern, ruleAction)
+		case behavior == "ipcidr":
+			newRule = fmt.Sprintf("IP-CIDR,%s,%s", pattern, ruleAction)
+		default:
+			return nil, fmt.Errorf("unknown rule provider behavior: %s", behavior)
+		}
+		rules = append(rules, newRule)
+	}
+	return rules, nil
+}
+
+func (c *Config) proxyRuleProviders(r *http.Request) error {
+	ruleProviders, err := asStringAnyMapField(c.Template, "rule-providers")
+	if err != nil {
+		return err
+	}
+	for ruleSetName, ruleProviderRaw := range ruleProviders {
+		ruleProvider, err := asStringAnyMap(ruleProviderRaw, fmt.Sprintf("rule-providers.%s", ruleSetName))
+		if err != nil {
+			return err
+		}
+
+		proxyURL := fmt.Sprintf("%s://%s/rule-providers?rule-set=%s", Scheme(r), HostAndPort(r), ruleSetName)
+		ruleProvider["url"] = proxyURL
+		ruleProviders[ruleSetName] = ruleProvider
+	}
+	c.Template["rule-providers"] = ruleProviders
+	return nil
+}
+
+func deepCopyTemplate(src map[string]any) (YamlStrDict, error) {
+	if src == nil {
+		return YamlStrDict{}, nil
+	}
+
+	data, err := yaml.Marshal(src)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal template: %w", err)
+	}
+
+	var dst YamlStrDict
+	if err := yaml.Unmarshal(data, &dst); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal template copy: %w", err)
+	}
+	return dst, nil
 }
 
 func Scheme(r *http.Request) string {

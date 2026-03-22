@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -63,7 +64,7 @@ func download(url *url.URL,
 			"sec-ch-ua-platform":        []string{"\"Windows\""},
 		}
 		resp, err := http.DefaultClient.Do(req)
-		if err != nil || resp.StatusCode != 200 {
+		if err != nil {
 			if cache_ok && use_cache_on_err {
 				return load_cache(cache_key)
 			}
@@ -71,6 +72,15 @@ func download(url *url.URL,
 			return nil, err
 		}
 		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			err = fmt.Errorf("unexpected HTTP status for %s: %s", url, resp.Status)
+			if cache_ok && use_cache_on_err {
+				return load_cache(cache_key)
+			}
+			log.Printf("Failed to request %s: %v", url, err)
+			return nil, err
+		}
 
 		content, err = io.ReadAll(resp.Body)
 		if err != nil {

@@ -41,9 +41,20 @@ func logRequest(r *http.Request) {
 	requestDump, err := httputil.DumpRequest(r, true)
 	if err != nil {
 		log.Printf("Failed to dump request: %v\n", err)
-	} else {
-		log.Printf("%s Request: %s\n", time.Now().Format("2006-01-02 15:04:05"), string(requestDump))
+		return
 	}
+	// Sanitize sensitive data before logging
+	dumpStr := string(requestDump)
+	sensitiveFields := []string{"token", "secret", "external_controller_addr", "nameserver_policy"}
+	for _, field := range sensitiveFields {
+		// Sanitize query parameters
+		re := regexp.MustCompile(`(?i)` + field + `=([^&\s]+)`)
+		dumpStr = re.ReplaceAllString(dumpStr, field+"=[REDACTED]")
+		// Sanitize header values
+		re = regexp.MustCompile(`(?i)(` + field + `:\s*)([^\r\n]+)`)
+		dumpStr = re.ReplaceAllString(dumpStr, "${1}[REDACTED]")
+	}
+	log.Printf("%s Request: %s\n", time.Now().Format("2006-01-02 15:04:05"), dumpStr)
 }
 
 var YES_ANSWER = map[string]struct{}{
@@ -172,6 +183,45 @@ func getBoolOrDefault(query url.Values, key string, def bool) (bool, error) {
 
 }
 
+var knownConfigQueryKeys = map[string]struct{}{
+	"upstream":                   {},
+	"organizer":                  {},
+	"top_select":                 {},
+	"keep_upstream_selector":     {},
+	"port_proxy":                 {},
+	"bind_address":               {},
+	"port":                       {},
+	"socks_port":                 {},
+	"mixed_port":                 {},
+	"tproxy":                     {},
+	"redir_port":                 {},
+	"tproxy_port":                {},
+	"allow_lan":                  {},
+	"external_controller_type":   {},
+	"external_controller_addr":   {},
+	"external_controller_secret": {},
+	"dns":                        {},
+	"dns_listen":                 {},
+	"enhanced_mode":              {},
+	"default_nameserver":         {},
+	"nameserver":                 {},
+	"fallback":                   {},
+	"nameserver_policy":          {},
+	"tun":                        {},
+	"tun_stack":                  {},
+	"rule_provider_transform":    {},
+	"custom_rules":               {},
+	"log_level":                  {},
+}
+
+func warnUnknownQueryParams(query url.Values) {
+	for key := range query {
+		if _, ok := knownConfigQueryKeys[key]; !ok {
+			log.Printf("Warning: unrecognized query parameter %q", key)
+		}
+	}
+}
+
 func handleConfig(w http.ResponseWriter, r *http.Request) {
 	var (
 		err      error
@@ -188,6 +238,8 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "index.html")
 		return
 	}
+
+	warnUnknownQueryParams(query)
 
 	c := Config{}
 
@@ -208,6 +260,7 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 	if c.PortProxy, err = getBoolOrDefault(query, "port_proxy", false); err != nil {
 		goto bad_args
 	}
+	c.BindAddress = getString(query, "bind_address")
 	if c.HttpPort, err = getNumber(query, "port"); err != nil {
 		goto bad_args
 	}
@@ -235,7 +288,7 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 		goto bad_args
 	}
 	c.ExternalControllerAddr = getString(query, "external_controller_addr")
-	c.Secret = getString(query, "secret")
+	c.ExternalControllerSecret = getString(query, "external_controller_secret")
 
 	if c.Dns, err = getBoolOrDefault(query, "dns", false); err != nil {
 		goto bad_args
@@ -253,6 +306,7 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 		goto bad_args
 	}
 	c.TunStack = getString(query, "tun_stack")
+	c.LogLevel = getString(query, "log_level")
 
 	if c.RuleProviderTransform, err = StringToRuleProviderTransform(getString(query, "rule_provider_transform")); err != nil {
 		goto bad_args
@@ -299,7 +353,18 @@ except:
 }
 
 func handleFileOp(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("token") != token {
+	// Support multiple authentication methods: query token, Authorization header, X-Auth-Token header
+	authToken := r.URL.Query().Get("token")
+	if authToken == "" {
+		authToken = r.Header.Get("Authorization")
+		if authToken != "" && strings.HasPrefix(authToken, "Bearer ") {
+			authToken = strings.TrimPrefix(authToken, "Bearer ")
+		}
+	}
+	if authToken == "" {
+		authToken = r.Header.Get("X-Auth-Token")
+	}
+	if authToken != token {
 		http.Error(w, "", http.StatusForbidden)
 		return
 	}
@@ -319,23 +384,12 @@ func handleFileOp(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
+	defer formfile.Close()
 
-	// 保存到本地
-	fileSize, err := formfile.Seek(0, io.SeekEnd) // Seek to the end of the file
+	// Use io.ReadAll for robust multipart file reading
+	data, err := io.ReadAll(formfile)
 	if err != nil {
-		log.Printf("Failed to get file size: %v\n", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	_, err = formfile.Seek(0, io.SeekStart)
-	if err != nil {
-		log.Printf("Failed to seek to the beginning of the file: %v\n", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	data := make([]byte, fileSize)
-	if _, err := formfile.Read(data); err != nil {
-		log.Printf("Failed to save file: %v\n", err)
+		log.Printf("Failed to read file: %v\n", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}

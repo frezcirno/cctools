@@ -113,7 +113,8 @@
     }
 
     input,
-    select {
+    select,
+    textarea {
       padding: 10px;
       border: 1px solid var(--border-color);
       border-radius: 6px;
@@ -165,6 +166,19 @@
 
     button:hover {
       background-color: var(--primary-hover);
+    }
+
+    .default-btn {
+      margin-left: 10px;
+      padding: 8px 14px;
+      font-size: 0.9rem;
+      white-space: nowrap;
+    }
+
+    .default-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      background-color: #ccc;
     }
 
     .hidden {
@@ -259,6 +273,9 @@
                       checked>Oversea</label>
                 </div>
                 <div class="checkbox-item">
+                  <label class="selectable"><input type="checkbox" id="organizer-us" name="organizer-us">US</label>
+                </div>
+                <div class="checkbox-item">
                   <label class="selectable"><input type="checkbox" id="organizer-udp" name="organizer-udp"
                       checked>UDP</label>
                 </div>
@@ -271,8 +288,8 @@
             </div>
 
             <div class="form-item">
-              <label class="item-label" for="keep_upstream_select">Keep Upstream Selector</label>
-              <input class="item-content" type="checkbox" id="keep_upstream_select" name="keep_upstream_select">
+              <label class="item-label" for="keep_upstream_selector">Keep Upstream Selector</label>
+              <input class="item-content" type="checkbox" id="keep_upstream_selector" name="keep_upstream_selector">
             </div>
           </div>
         </div>
@@ -449,7 +466,7 @@
                 if (platform === 'windows') {
                   nameserver.placeholder += ', dhcp://WLAN';
                 } else if (platform === 'linux') {
-                  nameserver.placeholder += ', dhcp://ens12p0';
+                  nameserver.placeholder += ', dhcp://<interface-name>';
                 }
               }
             </script>
@@ -541,10 +558,10 @@ https://101.101.101.101/dns-query
             </div>
 
             <!-- custom rules: string -->
+            <!-- NOTE: This field is not yet implemented in the Go backend (config.go/main.go) -->
             <div class="form-item">
-              <label class="item-label" for="custom_rules">Custom Rules</label>
-              <textarea class="item-content" id="custom_rules" name="custom_rules" rows="5"
-                placeholder="DOMAIN-SUFFIX,leetcode.cn,CNSITE"></textarea>
+              <label class="item-label" for="custom_rules">Custom Rules <small style="color: #999;">(not yet implemented)</small></label>
+              <textarea class="item-content" id="custom_rules" name="custom_rules" rows="5"></textarea>
             </div>
           </div>
         </div>
@@ -570,11 +587,18 @@ https://101.101.101.101/dns-query
 
       <div class="result">
         <h2>Configuration Result</h2>
-        <textarea id="result" rows="8" style="width: 100%; margin-bottom: 20px;" onfocus="this.select()"
-          onclick="this.select()" onmouseup="return false;"></textarea>
+        <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+          <textarea id="result" rows="8" style="width: 100%; flex: 1;" onfocus="this.select()"
+            onclick="this.select()"></textarea>
+          <button type="button" id="copy-btn" style="margin-top: 0; height: fit-content; align-self: flex-start;"
+            onclick="copyResult()">Copy URL</button>
+        </div>
       </div>
 
-      <button type="submit" style="margin-top: 20px;">Generate URL</button>
+      <div style="display: flex; gap: 10px; margin-top: 20px;">
+        <button type="submit">Generate URL</button>
+        <button type="button" onclick="resetForm()">Reset</button>
+      </div>
     </form>
   </main>
 
@@ -599,40 +623,111 @@ https://101.101.101.101/dns-query
     function handleSubmit(event) {
       event.preventDefault(); // 阻止表单的默认提交行为
       const form = event.target; // 获取表单
-      // 获取所有的输入框
-      form.querySelectorAll('input').forEach(input => {
-        // 如果输入框是空的，并且有占位符，使用占位符值
-        if (!input.value && input.placeholder) {
-          input.value = input.placeholder;
-        }
-      });
-      // textarea同理
-      form.querySelectorAll('textarea').forEach(textarea => {
-        if (!textarea.value && textarea.placeholder) {
-          textarea.value = textarea.placeholder;
-        }
-      });
 
       // 显示结果
       const result = document.getElementById('result');
       const data = Object.fromEntries(new FormData(form));
+
+      // trim string inputs before generating URL
+      for (const [key, value] of Object.entries(data)) {
+        if (typeof value === 'string') {
+          data[key] = value.trim();
+        }
+      }
 
       // merge organizer-* into organizer
       data.organizer = Object.keys(data).filter(key => key.startsWith('organizer-')).map(key => key.split('-')[1]).join(',');
       delete data['organizer-cn'];
       delete data['organizer-tw'];
       delete data['organizer-oversea'];
+      delete data['organizer-us'];
       delete data['organizer-udp'];
+
+      // drop empty values so optional fields can stay empty
+      Object.keys(data).forEach(key => {
+        if (data[key] === '') {
+          delete data[key];
+        }
+      });
 
       // make up URL
       const currentUrl = new URL(window.location.href);
       const params = new URLSearchParams(data).toString();
-      const url = `${currentUrl.origin}${currentUrl.pathname}?${params}`;
+      const url = params ? `${currentUrl.origin}${currentUrl.pathname}?${params}` : `${currentUrl.origin}${currentUrl.pathname}`;
 
-      result.textContent = url;
+      result.value = url;
       // 阻止表单的默认提交行为
       return false;
     }
+
+    function copyResult() {
+      const result = document.getElementById('result');
+      if (result.value || result.textContent) {
+        navigator.clipboard.writeText(result.value || result.textContent).then(() => {
+          const copyBtn = document.getElementById('copy-btn');
+          const originalText = copyBtn.textContent;
+          copyBtn.textContent = 'Copied!';
+          setTimeout(() => {
+            copyBtn.textContent = originalText;
+          }, 2000);
+        }).catch(err => {
+          console.error('Failed to copy:', err);
+          // Fallback: select the text
+          result.select();
+          document.execCommand('copy');
+        });
+      }
+    }
+
+    function resetForm() {
+      const form = document.querySelector('form');
+      form.reset();
+      // Reset the result textarea
+      const result = document.getElementById('result');
+      result.value = '';
+      // Re-initialize fieldset visibility
+      document.querySelectorAll('.toggle-checkbox').forEach(checkbox => {
+        toggleFieldset(checkbox.id);
+      });
+      // Re-generate random secret
+      const secretInput = document.getElementById('external_controller_secret');
+      if (secretInput) {
+        secretInput.value = generateRandomPassword(16);
+      }
+    }
+
+    function applyDefaultValue(fieldId) {
+      const field = document.getElementById(fieldId);
+      if (!field || !field.placeholder) {
+        return;
+      }
+      field.value = field.placeholder.trim();
+      syncDefaultBtn(field);
+    }
+
+    function syncDefaultBtn(field) {
+      const btn = field.nextElementSibling;
+      if (!btn || !btn.classList.contains('default-btn')) {
+        return;
+      }
+      const trimmedPlaceholder = field.placeholder.trim();
+      btn.disabled = (field.value === trimmedPlaceholder);
+    }
+
+    document.querySelectorAll('.form-item input[placeholder], .form-item textarea[placeholder]').forEach(field => {
+      if (!field.id) {
+        return;
+      }
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'default-btn';
+      button.textContent = 'Default';
+      button.onclick = () => applyDefaultValue(field.id);
+      field.insertAdjacentElement('afterend', button);
+      field.addEventListener('input', () => syncDefaultBtn(field));
+      field.addEventListener('change', () => syncDefaultBtn(field));
+      syncDefaultBtn(field);
+    });
 
   </script>
 </body>

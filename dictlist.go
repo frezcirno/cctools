@@ -1,5 +1,7 @@
 package main
 
+import "fmt"
+
 type (
 	YamlStrDict map[string]any
 )
@@ -23,14 +25,16 @@ type DictList map[string]YamlStrDict
 
 func NewDictList(in []any) DictList {
 	dl := DictList{}
-	for _, elm := range in {
-		elm := elm.(map[any]any)
-		name := elm["name"].(string)
-		value := YamlStrDict{}
-		for k, v := range elm {
-			value[k.(string)] = v
+	for idx, elm := range in {
+		value, err := asStringAnyMap(elm, fmt.Sprintf("dictlist[%d]", idx))
+		if err != nil {
+			panic(err)
 		}
-		dl[name] = value
+		name, err := asString(value["name"], fmt.Sprintf("dictlist[%d].name", idx))
+		if err != nil {
+			panic(err)
+		}
+		dl[name] = YamlStrDict(value)
 	}
 	return dl
 }

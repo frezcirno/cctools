@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -32,6 +34,51 @@ func convertRawListToRuleProvider(rawList []byte) []byte {
 	}
 
 	return bytes.Join(rules, []byte("\n"))
+}
+
+func isDisallowedUpstreamIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast()
+}
+
+func validateProxyUpstream(raw string) (*url.URL, error) {
+	if raw == "" {
+		return nil, fmt.Errorf("missing url")
+	}
+
+	target, err := url.Parse(raw)
+	if err != nil {
+		return nil, err
+	}
+	if target.Scheme != "http" && target.Scheme != "https" {
+		return nil, fmt.Errorf("unsupported scheme %q", target.Scheme)
+	}
+
+	hostname := strings.TrimSuffix(strings.ToLower(target.Hostname()), ".")
+	if hostname == "" {
+		return nil, fmt.Errorf("missing host")
+	}
+	if hostname == "localhost" || strings.HasSuffix(hostname, ".local") || strings.HasSuffix(hostname, ".localhost") {
+		return nil, fmt.Errorf("disallowed upstream host %q", hostname)
+	}
+
+	if ip := net.ParseIP(hostname); ip != nil {
+		if isDisallowedUpstreamIP(ip) {
+			return nil, fmt.Errorf("disallowed upstream IP %q", ip.String())
+		}
+		return target, nil
+	}
+
+	ips, err := net.LookupIP(hostname)
+	if err != nil {
+		return nil, err
+	}
+	for _, ip := range ips {
+		if isDisallowedUpstreamIP(ip) {
+			return nil, fmt.Errorf("disallowed upstream IP %q for host %q", ip.String(), hostname)
+		}
+	}
+
+	return target, nil
 }
 
 func handleRuleProviders(w http.ResponseWriter, r *http.Request) {
@@ -67,21 +114,21 @@ func handleRuleProviders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ruleUrl, ok := rule_provider["url"].(string)
+	ruleURL, ok := rule_provider["url"].(string)
 	if !ok {
 		log.Printf("Failed to load rule-provider url: %v\n", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
-	url, err := url.Parse(ruleUrl)
+	parsedURL, err := url.Parse(ruleURL)
 	if err != nil {
 		log.Printf("Failed to parse rule-provider url: %v\n", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
-	content, err := download(url, fmt.Sprintf("rule-%s.yaml", rule_set_name), 5*365*24*time.Hour, 10, true)
+	content, err := download(parsedURL, fmt.Sprintf("rule-%s.yaml", rule_set_name), 5*365*24*time.Hour, 10, true)
 	if err != nil {
 		log.Printf("Failed to download rule-provider: %v\n", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -90,6 +137,12 @@ func handleRuleProviders(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/x-yaml")
 	w.Write(content)
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
 
 func makeProxy() *httputil.ReverseProxy {
@@ -101,22 +154,31 @@ func makeProxy() *httputil.ReverseProxy {
 	revProxy.Director = func(req *http.Request) {
 		logRequest(req)
 
-		upstream := req.URL.Query().Get("url")
-		if upstream == "" {
-			return
-		}
-
-		upstreamURL, err := url.Parse(upstream)
+		upstreamURL, err := validateProxyUpstream(req.URL.Query().Get("url"))
 		if err != nil {
+			log.Printf("Rejected /convert upstream: %v", err)
+			req.URL = &url.URL{}
+			req.Host = ""
+			req.Header.Del("Host")
 			return
 		}
 
 		req.URL = upstreamURL
 		req.Host = upstreamURL.Host
-
 		req.Header["Host"] = []string{upstreamURL.Host}
 		req.Header["X-Forwarded-For"] = nil
 		req.Header["Accept-Encoding"] = nil
+	}
+
+	revProxy.Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		if _, err := validateProxyUpstream(req.URL.String()); err != nil {
+			return nil, err
+		}
+		return http.DefaultTransport.RoundTrip(req)
+	})
+
+	revProxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 	}
 
 	revProxy.ModifyResponse = func(resp *http.Response) error {

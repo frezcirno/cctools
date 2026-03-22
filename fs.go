@@ -52,8 +52,8 @@ func fsLoad(fspath string) ([]byte, error) {
 func fsStat(fspath string) (os.FileInfo, error) {
 	if FS_IS_READONLY {
 		// try to load from memory first
-		if _, err := memfsStat(fspath); err == nil {
-			return nil, nil
+		if info, err := memfsStat(fspath); err == nil {
+			return info, nil
 		}
 	}
 	key := resolvePath(fspath)

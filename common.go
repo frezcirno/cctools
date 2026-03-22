@@ -10,16 +10,17 @@ type AirportSpec struct {
 	Name          string   `yaml:"name"`
 	Urls          []string `yaml:"urls"`
 	Ttl           int      `yaml:"ttl"`
-	Default       bool     `yaml:"default"`
-	Tags          []string `yaml:"tags"`
+	Tags          []string `yaml:"tag"`
 	UseCacheOnErr bool     `yaml:"use-cache-on-err"`
+	Enable        *bool    `yaml:"enable"`
+}
+
+func (as *AirportSpec) enabled() bool {
+	return as.Enable == nil || *as.Enable
 }
 
 func (as *AirportSpec) tags() []string {
 	tags := append(as.Tags, as.Name, "all")
-	if as.Default {
-		tags = append(tags, "default")
-	}
 	return tags
 }
 
@@ -37,7 +38,6 @@ func NewAirport() Airport {
 }
 
 func (airport *Airport) renameProxy(key string, new_key string) error {
-	// new_key should not exist
 	if airport.Proxies.get(new_key) != nil {
 		return fmt.Errorf("proxy %s already exists", new_key)
 	}
@@ -55,12 +55,16 @@ func (airport *Airport) renameProxy(key string, new_key string) error {
 		if !ok {
 			continue
 		}
-		groupProxiesL := groupProxies.([]any)
+		groupProxiesL, err := normalizeProxyNames(groupProxies)
+		if err != nil {
+			continue
+		}
 		for idx, groupProxy := range groupProxiesL {
 			if groupProxy == key {
 				groupProxiesL[idx] = new_key
 			}
 		}
+		group["proxies"] = groupProxiesL
 	}
 	return nil
 }
@@ -77,18 +81,111 @@ func (airport *Airport) renameGroup(key string, new_key string) error {
 	return nil
 }
 
-func (airport *Airport) groupAddProxies(key string, proxies []any) error {
-	// validate proxies
-	for _, proxy := range proxies {
-		if airport.Proxies.get(proxy.(string)) == nil {
+func normalizeProxyNames(v any) ([]string, error) {
+	switch vv := v.(type) {
+	case []string:
+		return append([]string(nil), vv...), nil
+	case []any:
+		res := make([]string, 0, len(vv))
+		for _, item := range vv {
+			name, ok := item.(string)
+			if !ok {
+				return nil, fmt.Errorf("invalid proxy entry type %T", item)
+			}
+			res = append(res, name)
+		}
+		return res, nil
+	default:
+		return nil, fmt.Errorf("invalid proxies type %T", v)
+	}
+}
+
+func asString(v any, field string) (string, error) {
+	s, ok := v.(string)
+	if !ok {
+		return "", fmt.Errorf("%s is not a string", field)
+	}
+	return s, nil
+}
+
+func asStringList(v any, field string) ([]string, error) {
+	switch vv := v.(type) {
+	case []string:
+		return append([]string(nil), vv...), nil
+	case []any:
+		res := make([]string, 0, len(vv))
+		for idx, item := range vv {
+			s, ok := item.(string)
+			if !ok {
+				return nil, fmt.Errorf("%s[%d] is not a string", field, idx)
+			}
+			res = append(res, s)
+		}
+		return res, nil
+	default:
+		return nil, fmt.Errorf("%s is not a string list", field)
+	}
+}
+
+func asAnyList(v any, field string) ([]any, error) {
+	switch vv := v.(type) {
+	case []any:
+		return vv, nil
+	case []string:
+		res := make([]any, 0, len(vv))
+		for _, item := range vv {
+			res = append(res, item)
+		}
+		return res, nil
+	default:
+		return nil, fmt.Errorf("%s is not a list", field)
+	}
+}
+
+func asStringAnyMap(v any, field string) (map[string]any, error) {
+	switch vv := v.(type) {
+	case map[string]any:
+		return vv, nil
+	case YamlStrDict:
+		return map[string]any(vv), nil
+	case map[any]any:
+		res := make(map[string]any, len(vv))
+		for key, value := range vv {
+			ks, ok := key.(string)
+			if !ok {
+				return nil, fmt.Errorf("%s has non-string key %T", field, key)
+			}
+			res[ks] = value
+		}
+		return res, nil
+	default:
+		return nil, fmt.Errorf("%s is not a map", field)
+	}
+}
+
+func asStringAnyMapField(m map[string]any, key string) (map[string]any, error) {
+	v, ok := m[key]
+	if !ok {
+		return nil, fmt.Errorf("%s not found", key)
+	}
+	return asStringAnyMap(v, key)
+}
+
+func (airport *Airport) groupAddProxies(key string, proxies any) error {
+	proxyNames, err := normalizeProxyNames(proxies)
+	if err != nil {
+		return err
+	}
+
+	for _, proxy := range proxyNames {
+		if airport.Proxies.get(proxy) == nil {
 			return fmt.Errorf("proxy %s not found", proxy)
 		}
 	}
 
-	// ensure group
 	group := airport.Groups.get(key)
 	if group == nil {
-		group = YamlStrDict{}
+		group = YamlStrDict{"proxies": []string{}}
 		airport.Groups.set(key, group)
 	}
 
@@ -97,10 +194,12 @@ func (airport *Airport) groupAddProxies(key string, proxies []any) error {
 		return fmt.Errorf("group %s has no 'proxies'", key)
 	}
 
-	groupProxiesL := groupProxies.([]string)
+	groupProxiesL, err := normalizeProxyNames(groupProxies)
+	if err != nil {
+		return fmt.Errorf("group %s has invalid 'proxies': %w", key, err)
+	}
 
-	// dedup add
-	for _, proxy := range proxies {
+	for _, proxy := range proxyNames {
 		found := false
 		for _, groupProxy := range groupProxiesL {
 			if groupProxy == proxy {
@@ -109,7 +208,7 @@ func (airport *Airport) groupAddProxies(key string, proxies []any) error {
 			}
 		}
 		if !found {
-			groupProxiesL = append(groupProxiesL, proxy.(string))
+			groupProxiesL = append(groupProxiesL, proxy)
 		}
 	}
 
@@ -125,9 +224,11 @@ func (airport *Airport) removeProxy(key string) {
 		if !ok {
 			continue
 		}
-		groupProxiesL := groupProxies.([]any)
+		groupProxiesL, err := normalizeProxyNames(groupProxies)
+		if err != nil {
+			continue
+		}
 
-		// avoid memory reallocation
 		k := 0
 		for idx, groupProxy := range groupProxiesL {
 			if groupProxy != key {
