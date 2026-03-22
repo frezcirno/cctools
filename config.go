@@ -627,7 +627,7 @@ func selectorProxies(selector string, groupKeys []string) []string {
 func (c *Config) transformRuleProviders(r *http.Request) error {
 	log.Printf("Transforming rule providers with mode=%s", c.RuleProviderTransform)
 	if c.RuleProviderTransform == RPT_INLINE {
-		return c.inlineRuleProviders()
+		return c.inlineRuleProviders(r)
 	}
 	if c.RuleProviderTransform == RPT_PROXY {
 		return c.proxyRuleProviders(r)
@@ -635,7 +635,21 @@ func (c *Config) transformRuleProviders(r *http.Request) error {
 	return nil
 }
 
-func (c *Config) inlineRuleProviders() error {
+func absoluteURL(r *http.Request, raw string) string {
+	if raw == "" {
+		return raw
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	if parsed.IsAbs() {
+		return raw
+	}
+	return fmt.Sprintf("%s://%s%s", Scheme(r), HostAndPort(r), raw)
+}
+
+func (c *Config) inlineRuleProviders(r *http.Request) error {
 	ruleProviders, err := asStringAnyMapField(c.Template, "rule-providers")
 	if err != nil {
 		return err
@@ -657,6 +671,7 @@ func (c *Config) inlineRuleProviders() error {
 		if err != nil {
 			return err
 		}
+		ruleProviderURL = absoluteURL(r, ruleProviderURL)
 		url, err := url.Parse(ruleProviderURL)
 		if err != nil {
 			log.Printf("Failed to parse rule provider url: %v", err)

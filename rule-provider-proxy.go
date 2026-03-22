@@ -145,7 +145,7 @@ func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
-func makeProxy() *httputil.ReverseProxy {
+func makeProxy() http.Handler {
 	revProxy := httputil.NewSingleHostReverseProxy(&url.URL{
 		Scheme: "http",
 		Host:   "baidu.com",
@@ -193,12 +193,40 @@ func makeProxy() *httputil.ReverseProxy {
 		newb := convertRawListToRuleProvider(b)
 		newbuf := bytes.NewBuffer(newb)
 
+		if resp.Request != nil && resp.Request.URL != nil {
+			cacheKey := make_cache_key(resp.Request.URL)
+			if err := save_cache(cacheKey, newb); err != nil {
+				log.Printf("Failed to save /convert cache for %s: %v", resp.Request.URL.String(), err)
+			}
+		}
+
 		resp.Body = io.NopCloser(newbuf)
 		resp.ContentLength = int64(newbuf.Len())
 		resp.Header["Content-Length"] = []string{fmt.Sprint(newbuf.Len())}
+		resp.Header.Set("Content-Type", "application/x-yaml")
 
 		return nil
 	}
 
-	return revProxy
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamURL, err := validateProxyUpstream(r.URL.Query().Get("url"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		cacheKey := make_cache_key(upstreamURL)
+		const ttl = 24 * time.Hour
+		if ok, _ := cache_is_ok(cacheKey, ttl); ok {
+			if content, err := load_cache(cacheKey); err == nil {
+				w.Header().Set("Content-Type", "application/x-yaml")
+				w.Header().Set("X-Cache", "HIT")
+				w.Write(content)
+				return
+			}
+		}
+
+		w.Header().Set("X-Cache", "MISS")
+		revProxy.ServeHTTP(w, r)
+	})
 }

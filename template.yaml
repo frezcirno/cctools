@@ -367,7 +367,7 @@ rule-providers:
   ad_ipcidr:
     type: http
     behavior: ipcidr
-    url: http://s6bcxwvrz.hd-bkt.clouddn.com/ad-ip.yaml
+    url: https://raw.githubusercontent.com/HosheaPDNX/rule-set/e54868adeb063dfbbd8bbc18268f285161211d75/mihomo/AD/AD-IP.yaml
     path: ./ruleset/ad-ip.yaml
     interval: 86400
 
