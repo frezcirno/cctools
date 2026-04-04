@@ -32,8 +32,8 @@ type Airport struct {
 
 func NewAirport() Airport {
 	return Airport{
-		Proxies: DictList{},
-		Groups:  DictList{},
+		Proxies: NewEmptyDictList(),
+		Groups:  NewEmptyDictList(),
 	}
 }
 
@@ -47,17 +47,17 @@ func (airport *Airport) renameProxy(key string, new_key string) error {
 		return fmt.Errorf("proxy %s not found", key)
 	}
 
-	delete(airport.Proxies, key)
+	airport.Proxies.del(key)
 	airport.Proxies.set(new_key, proxy)
 
-	for _, group := range airport.Groups {
+	airport.Groups.each(func(_ string, group YamlStrDict) {
 		groupProxies, ok := group["proxies"]
 		if !ok {
-			continue
+			return
 		}
 		groupProxiesL, err := normalizeProxyNames(groupProxies)
 		if err != nil {
-			continue
+			return
 		}
 		for idx, groupProxy := range groupProxiesL {
 			if groupProxy == key {
@@ -65,7 +65,7 @@ func (airport *Airport) renameProxy(key string, new_key string) error {
 			}
 		}
 		group["proxies"] = groupProxiesL
-	}
+	})
 	return nil
 }
 
@@ -75,7 +75,7 @@ func (airport *Airport) renameGroup(key string, new_key string) error {
 		return fmt.Errorf("group %s not found", key)
 	}
 
-	delete(airport.Groups, key)
+	airport.Groups.del(key)
 	airport.Groups.set(new_key, group)
 
 	return nil
@@ -148,16 +148,6 @@ func asStringAnyMap(v any, field string) (map[string]any, error) {
 		return vv, nil
 	case YamlStrDict:
 		return map[string]any(vv), nil
-	case map[any]any:
-		res := make(map[string]any, len(vv))
-		for key, value := range vv {
-			ks, ok := key.(string)
-			if !ok {
-				return nil, fmt.Errorf("%s has non-string key %T", field, key)
-			}
-			res[ks] = value
-		}
-		return res, nil
 	default:
 		return nil, fmt.Errorf("%s is not a map", field)
 	}
@@ -217,16 +207,16 @@ func (airport *Airport) groupAddProxies(key string, proxies any) error {
 }
 
 func (airport *Airport) removeProxy(key string) {
-	delete(airport.Proxies, key)
+	airport.Proxies.del(key)
 
-	for _, group := range airport.Groups {
+	airport.Groups.each(func(_ string, group YamlStrDict) {
 		groupProxies, ok := group["proxies"]
 		if !ok {
-			continue
+			return
 		}
 		groupProxiesL, err := normalizeProxyNames(groupProxies)
 		if err != nil {
-			continue
+			return
 		}
 
 		k := 0
@@ -239,14 +229,18 @@ func (airport *Airport) removeProxy(key string) {
 			}
 		}
 		group["proxies"] = groupProxiesL[:k]
-	}
+	})
 }
 
 func (airport *Airport) filterProxy(filter func(YamlStrDict) bool) {
-	for key, proxy := range airport.Proxies {
+	toRemove := []string{}
+	airport.Proxies.each(func(key string, proxy YamlStrDict) {
 		if !filter(proxy) {
-			airport.removeProxy(key)
+			toRemove = append(toRemove, key)
 		}
+	})
+	for _, key := range toRemove {
+		airport.removeProxy(key)
 	}
 }
 

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v3"
 )
 
 var token = os.Getenv("TOKEN")
@@ -22,15 +22,13 @@ func init() {
 	for _, fp := range []string{"./upstreams.yaml", "./template.yaml"} {
 		f, err := os.Open(fp)
 		if err != nil {
-			log.Panicf("Failed to open upstreams.yaml: %v\n", err)
-			return
+			log.Panicf("Failed to open %s: %v\n", fp, err)
 		}
-		defer f.Close()
 
 		src, err := io.ReadAll(f)
+		f.Close()
 		if err != nil {
-			log.Panicf("Failed to read upstreams.yaml: %v\n", err)
-			return
+			log.Panicf("Failed to read %s: %v\n", fp, err)
 		}
 
 		fsStore(fp, src)
@@ -77,18 +75,20 @@ var NO_ANSWER = map[string]struct{}{
 }
 
 func loadUpstreams() (tpl map[string]AirportSpec, err error) {
-	upstreams_yaml, _ := fsLoad("./upstreams.yaml")
+	upstreams_yaml, err := fsLoad("./upstreams.yaml")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load upstreams.yaml: %w", err)
+	}
 	err = yaml.Unmarshal(upstreams_yaml, &tpl)
 	return
 }
 
 func loadTemplate() (tpl map[string]any, err error) {
-	template_yaml, _ := fsLoad("./template.yaml")
-
-	err = yaml.Unmarshal(template_yaml, &tpl)
+	template_yaml, err := fsLoad("./template.yaml")
 	if err != nil {
-		log.Fatalf("Failed to load template: %v", err)
+		return nil, fmt.Errorf("failed to load template.yaml: %w", err)
 	}
+	err = yaml.Unmarshal(template_yaml, &tpl)
 	return
 }
 
@@ -128,13 +128,13 @@ func getStringMap(query url.Values, key string) (map[string]string, error) {
 	}
 	m := map[string]string{}
 	for _, user_kv := range sep.Split(str, -1) {
-		// geosite:cn: 223.5.5.5
-		kv := strings.Split(user_kv, ":")
-		if len(kv) < 2 || len(kv) > 3 {
+		// Split on the last colon, e.g. "geosite:cn:223.5.5.5" → key="geosite:cn", value="223.5.5.5"
+		idx := strings.LastIndex(user_kv, ":")
+		if idx < 0 {
 			return nil, &ErrInvalid{user_kv}
 		}
-		k := strings.TrimSpace(strings.Join(kv[:len(kv)-1], ":"))
-		v := strings.TrimSpace(kv[len(kv)-1])
+		k := strings.TrimSpace(user_kv[:idx])
+		v := strings.TrimSpace(user_kv[idx+1:])
 		m[k] = v
 	}
 	return m, nil
@@ -222,76 +222,64 @@ func warnUnknownQueryParams(query url.Values) {
 	}
 }
 
-func handleConfig(w http.ResponseWriter, r *http.Request) {
-	var (
-		err      error
-		out      []byte
-		ua       string
-		instance map[string]any
-	)
+type badRequestError struct{ error }
 
-	logRequest(r)
+func buildConfig(r *http.Request) ([]byte, error) {
 	query := r.URL.Query()
-
-	// if no query, return index.html
-	if len(query) == 0 {
-		http.ServeFile(w, r, "index.html")
-		return
-	}
-
 	warnUnknownQueryParams(query)
 
 	c := Config{}
+	var err error
 
 	if c.Upstreams, err = loadUpstreams(); err != nil {
-		goto except
+		return nil, err
 	}
 	if c.Template, err = loadTemplate(); err != nil {
-		goto except
+		return nil, err
 	}
 
 	c.Upstream = getStringArray(query, "upstream")
 	c.Organizer = getStringArray(query, "organizer")
 	c.TopSelect = getStringArray(query, "top_select")
 	if c.KeepUpstreamSelector, err = getBoolOrDefault(query, "keep_upstream_selector", false); err != nil {
-		goto bad_args
+		return nil, &badRequestError{err}
 	}
 
 	if c.PortProxy, err = getBoolOrDefault(query, "port_proxy", false); err != nil {
-		goto bad_args
+		return nil, &badRequestError{err}
 	}
 	c.BindAddress = getString(query, "bind_address")
 	if c.HttpPort, err = getNumber(query, "port"); err != nil {
-		goto bad_args
+		return nil, &badRequestError{err}
 	}
 	if c.SocksPort, err = getNumber(query, "socks_port"); err != nil {
-		goto bad_args
+		return nil, &badRequestError{err}
 	}
 	if c.MixedPort, err = getNumber(query, "mixed_port"); err != nil {
-		goto bad_args
+		return nil, &badRequestError{err}
 	}
 
 	if c.TransProxy, err = getBoolOrDefault(query, "tproxy", false); err != nil {
-		goto bad_args
+		return nil, &badRequestError{err}
 	}
 	if c.RedirPort, err = getNumber(query, "redir_port"); err != nil {
-		goto bad_args
+		return nil, &badRequestError{err}
 	}
 	if c.TproxyPort, err = getNumber(query, "tproxy_port"); err != nil {
-		goto bad_args
+		return nil, &badRequestError{err}
 	}
 
 	if c.AllowLan, err = getBoolOrDefault(query, "allow_lan", false); err != nil {
-		goto bad_args
+		return nil, &badRequestError{err}
 	}
 	if c.ExternalControllerType, err = StringToExternalControllerType(getString(query, "external_controller_type")); err != nil {
-		goto bad_args
+		return nil, &badRequestError{err}
 	}
 	c.ExternalControllerAddr = getString(query, "external_controller_addr")
 	c.ExternalControllerSecret = getString(query, "external_controller_secret")
 
 	if c.Dns, err = getBoolOrDefault(query, "dns", false); err != nil {
-		goto bad_args
+		return nil, &badRequestError{err}
 	}
 	c.DnsListen = getString(query, "dns_listen")
 	c.EnhancedMode = getString(query, "enhanced_mode")
@@ -299,20 +287,20 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 	c.Nameserver = getStringArray(query, "nameserver")
 	c.Fallback = getStringArray(query, "fallback")
 	if c.NameserverPolicy, err = getStringMap(query, "nameserver_policy"); err != nil {
-		goto bad_args
+		return nil, &badRequestError{err}
 	}
 
 	if c.Tun, err = getBoolOrDefault(query, "tun", false); err != nil {
-		goto bad_args
+		return nil, &badRequestError{err}
 	}
 	c.TunStack = getString(query, "tun_stack")
 	c.LogLevel = getString(query, "log_level")
 
 	if c.RuleProviderTransform, err = StringToRuleProviderTransform(getString(query, "rule_provider_transform")); err != nil {
-		goto bad_args
+		return nil, &badRequestError{err}
 	}
 
-	ua = r.Header.Get("User-Agent")
+	ua := r.Header.Get("User-Agent")
 	if strings.Contains(ua, "Windows") {
 		c.Platform = Windows
 	} else if strings.Contains(ua, "Linux") {
@@ -326,30 +314,39 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err = c.Validate(); err != nil {
-		goto bad_args
+		return nil, &badRequestError{err}
 	}
 
-	instance, err = c.generate(r)
+	instance, err := c.generate(r)
 	if err != nil {
-		goto except
+		return nil, err
 	}
 
-	out, err = yaml.Marshal(instance)
+	return yaml.Marshal(instance)
+}
+
+func handleConfig(w http.ResponseWriter, r *http.Request) {
+	logRequest(r)
+	query := r.URL.Query()
+
+	if len(query) == 0 {
+		http.ServeFile(w, r, "index.html")
+		return
+	}
+
+	out, err := buildConfig(r)
 	if err != nil {
-		goto except
+		if _, ok := err.(*badRequestError); ok {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		} else {
+			log.Printf("Internal Server Error: %v\n", err)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		}
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/x-yaml")
 	w.Write(out)
-	return
-
-bad_args:
-	http.Error(w, err.Error(), http.StatusBadRequest)
-	return
-
-except:
-	log.Printf("Internal Server Error: %v\n", err)
-	http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 }
 
 func handleFileOp(w http.ResponseWriter, r *http.Request) {
@@ -406,8 +403,12 @@ func main() {
 	http.HandleFunc("/rule-providers", handleRuleProviders)
 	http.Handle("/convert", makeProxy())
 
-	log.Printf("Starting server on 127.0.0.1:9000...\n")
-	if err := http.ListenAndServe("127.0.0.1:9000", nil); err != nil {
+	listenAddr := os.Getenv("LISTEN_ADDR")
+	if listenAddr == "" {
+		listenAddr = "127.0.0.1:9000"
+	}
+	log.Printf("Starting server on %s...\n", listenAddr)
+	if err := http.ListenAndServe(listenAddr, nil); err != nil {
 		log.Fatal(err)
 	}
 }

@@ -101,14 +101,14 @@ func handleRuleProviders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rule_providers, ok := template["rule-providers"].(map[any]any)
+	rule_providers, ok := template["rule-providers"].(map[string]any)
 	if !ok {
-		log.Printf("Failed to load rule-providers: %v\n", err)
+		log.Printf("Failed to load rule-providers\n")
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
-	rule_provider, ok := rule_providers[rule_set_name].(map[any]any)
+	rule_provider, ok := rule_providers[rule_set_name].(map[string]any)
 	if !ok {
 		http.Error(w, "Not Found", http.StatusNotFound)
 		return

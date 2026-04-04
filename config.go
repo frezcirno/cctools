@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
-	"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v3"
 )
 
-const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36"
+const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
 var PROXY_BLACKLIST = []string{"DIRECT", "REJECT", "GLOBAL", "✉️", "有效期", "群", "感谢", "非线路"}
 
@@ -89,7 +89,7 @@ func parseUpstream(content []byte) (*Airport, error) {
 	return &airport, nil
 }
 
-func mergeProxies(from, to Airport) {
+func mergeProxies(from, to *Airport) {
 	for _, key := range from.Proxies.keys() {
 		old_key := key
 		for to.Proxies.get(key) != nil {
@@ -102,8 +102,8 @@ func mergeProxies(from, to Airport) {
 	}
 }
 
-func mergeGroups(from, to Airport) {
-	for key := range from.Groups {
+func mergeGroups(from, to *Airport) {
+	for _, key := range from.Groups.keys() {
 		old_key := key
 		for to.Groups.get(key) != nil {
 			key = old_key + "_" + randomStr(3)
@@ -115,23 +115,29 @@ func mergeGroups(from, to Airport) {
 	}
 }
 
-func stackAirports(airports []Airport) Airport {
-	merged := NewAirport()
+func stackAirports(airports []*Airport) *Airport {
+	merged := &Airport{
+		Proxies: NewEmptyDictList(),
+		Groups:  NewEmptyDictList(),
+	}
 
 	for _, airport := range airports {
 		mergeProxies(airport, merged)
-		for key, group := range airport.Groups {
+		airport.Groups.each(func(key string, group YamlStrDict) {
 			if err := merged.groupAddProxies(key, group["proxies"]); err != nil {
 				log.Printf("Failed to merge proxies for group %s: %v", key, err)
 			}
-		}
+		})
 	}
 
 	return merged
 }
 
-func resolveAirportNameConflicts(airports map[string]Airport) {
-	merged := NewAirport()
+func resolveAirportNameConflicts(airports map[string]*Airport) {
+	merged := &Airport{
+		Proxies: NewEmptyDictList(),
+		Groups:  NewEmptyDictList(),
+	}
 	for _, airport := range airports {
 		mergeProxies(airport, merged)
 		mergeGroups(airport, merged)
@@ -179,11 +185,53 @@ type Config struct {
 	Platform              Platform
 }
 
+func validatePort(name string, port int) error {
+	if port < 0 || port > 65535 {
+		return fmt.Errorf("invalid %s: %d", name, port)
+	}
+	return nil
+}
+
 func (c *Config) Validate() error {
 	if c.Upstreams == nil {
 		return fmt.Errorf("need upstreams")
 	}
-
+	if err := validatePort("port", c.HttpPort); err != nil {
+		return err
+	}
+	if err := validatePort("socks_port", c.SocksPort); err != nil {
+		return err
+	}
+	if err := validatePort("mixed_port", c.MixedPort); err != nil {
+		return err
+	}
+	if err := validatePort("redir_port", c.RedirPort); err != nil {
+		return err
+	}
+	if err := validatePort("tproxy_port", c.TproxyPort); err != nil {
+		return err
+	}
+	if c.EnhancedMode != "" {
+		switch c.EnhancedMode {
+		case "fake-ip", "redir-host":
+		default:
+			return fmt.Errorf("invalid enhanced_mode: %s", c.EnhancedMode)
+		}
+	}
+	if c.TunStack != "" {
+		switch c.TunStack {
+		case "system", "gvisor", "mixed":
+		default:
+			return fmt.Errorf("invalid tun_stack: %s", c.TunStack)
+		}
+	}
+	if c.LogLevel != "" {
+		switch c.LogLevel {
+		case "debug", "info", "warning", "error", "silent":
+		default:
+			return fmt.Errorf("invalid log_level: %s", c.LogLevel)
+		}
+	}
 	return nil
 }
 
@@ -452,14 +500,14 @@ func (c *Config) applyTunOptions() error {
 	return nil
 }
 
-func (c *Config) fetchAirports() map[string]Airport {
+func (c *Config) fetchAirports() map[string]*Airport {
 	log.Printf("Fetching airports for upstream selectors: %v", c.Upstream)
 	type pair struct {
 		k string
-		v Airport
+		v *Airport
 	}
 
-	airports := map[string]Airport{}
+	airports := map[string]*Airport{}
 	selectedUpstreams := c.selectedUpstreams()
 	ch := make(chan pair, len(selectedUpstreams))
 
@@ -476,7 +524,7 @@ func (c *Config) fetchAirports() map[string]Airport {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			resolvedAirports := []Airport{}
+			resolvedAirports := []*Airport{}
 			for idx, rawURL := range upstreamCopy.Urls {
 				parsedURL, err := url.Parse(rawURL)
 				if err != nil {
@@ -488,10 +536,10 @@ func (c *Config) fetchAirports() map[string]Airport {
 					log.Printf("Failed upstream URL: upstream=%s index=%d err=%v", upstreamCopy.Name, idx, err)
 					continue
 				}
-				resolvedAirports = append(resolvedAirports, *airport)
+				resolvedAirports = append(resolvedAirports, airport)
 			}
 			mergedAirport := stackAirports(resolvedAirports)
-			log.Printf("Finished upstream fetch: name=%s resolved_variants=%d merged_proxies=%d merged_groups=%d", upstreamCopy.Name, len(resolvedAirports), len(mergedAirport.Proxies), len(mergedAirport.Groups))
+			log.Printf("Finished upstream fetch: name=%s resolved_variants=%d merged_proxies=%d merged_groups=%d", upstreamCopy.Name, len(resolvedAirports), mergedAirport.Proxies.Len(), mergedAirport.Groups.Len())
 			ch <- pair{upstreamCopy.Name, mergedAirport}
 		}()
 	}
@@ -509,20 +557,20 @@ func (c *Config) fetchAirports() map[string]Airport {
 	return airports
 }
 
-func collectAllProxies(airports map[string]Airport) DictList {
-	allProxies := DictList{}
+func collectAllProxies(airports map[string]*Airport) DictList {
+	allProxies := NewEmptyDictList()
 	for _, airport := range airports {
 		allProxies.update(airport.Proxies)
 	}
 	return allProxies
 }
 
-func (c *Config) buildProxyGroups(airports map[string]Airport, allProxies DictList, allSelectors []string) []YamlStrDict {
-	log.Printf("Building proxy groups: selectors=%d airports=%d proxies=%d", len(allSelectors)+len(c.TopSelect), len(airports), len(allProxies))
+func (c *Config) buildProxyGroups(airports map[string]*Airport, allProxies DictList, allSelectors []string) []YamlStrDict {
+	log.Printf("Building proxy groups: selectors=%d airports=%d proxies=%d", len(allSelectors)+len(c.TopSelect), len(airports), allProxies.Len())
 	instanceURLTestGroups := []YamlStrDict{}
 	groupKey := "all"
 
-	if len(allProxies) > 0 {
+	if allProxies.Len() > 0 {
 		instanceURLTestGroups = append(instanceURLTestGroups, makeURLTestGroup(groupKey, allProxies.keys()))
 	}
 
@@ -530,7 +578,7 @@ func (c *Config) buildProxyGroups(airports map[string]Airport, allProxies DictLi
 
 	for name, airport := range airports {
 		airportProxies := airport.Proxies
-		if len(airportProxies) > 0 {
+		if airportProxies.Len() > 0 {
 			airportProxyKeys := airportProxies.keys()
 			sort.Strings(airportProxyKeys)
 			instanceURLTestGroups = append(instanceURLTestGroups, makeURLTestGroup(name, airportProxyKeys))
@@ -559,14 +607,20 @@ func (c *Config) buildProxyGroups(airports map[string]Airport, allProxies DictLi
 	return append(instanceSelectorGroups, instanceURLTestGroups...)
 }
 
+const (
+	defaultURLTestURL       = "http://www.gstatic.com/generate_204"
+	defaultURLTestInterval  = 300
+	defaultURLTestTolerance = 100
+)
+
 func makeURLTestGroup(name string, proxies []string) YamlStrDict {
 	return YamlStrDict{
 		"name":      name,
 		"type":      "url-test",
 		"proxies":   proxies,
-		"url":       "http://www.gstatic.com/generate_204",
-		"interval":  300,
-		"tolerance": 100,
+		"url":       defaultURLTestURL,
+		"interval":  defaultURLTestInterval,
+		"tolerance": defaultURLTestTolerance,
 	}
 }
 
@@ -594,17 +648,17 @@ func classifyProxies(proxies DictList, classifiers []struct {
 	for _, classifier := range classifiers {
 		classified[classifier.name] = []string{}
 	}
-	for _, proxy := range proxies {
+	proxies.each(func(_ string, proxy YamlStrDict) {
 		name, err := asString(proxy["name"], "proxy.name")
 		if err != nil {
-			continue
+			return
 		}
 		for _, classifier := range classifiers {
 			if classifier.matcher(proxy) {
 				classified[classifier.name] = append(classified[classifier.name], name)
 			}
 		}
-	}
+	})
 	return classified
 }
 

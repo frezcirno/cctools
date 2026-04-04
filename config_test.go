@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v3"
 )
 
 func TestCollectSelectorsIncludesCustomChainsInOrder(t *testing.T) {
@@ -224,12 +224,21 @@ func TestExpandRuleSetPatterns(t *testing.T) {
 	}
 }
 
-func TestClassifyProxiesUsesClassifierRegistry(t *testing.T) {
-	proxies := DictList{
-		"香港节点":    YamlStrDict{"name": "香港节点", "udp": true},
-		"台湾节点":    YamlStrDict{"name": "台湾节点", "udp": false},
-		"us-node": YamlStrDict{"name": "us-node", "udp": true},
+func makeDictList(entries ...YamlStrDict) DictList {
+	dl := NewEmptyDictList()
+	for _, entry := range entries {
+		name := entry["name"].(string)
+		dl.set(name, entry)
 	}
+	return dl
+}
+
+func TestClassifyProxiesUsesClassifierRegistry(t *testing.T) {
+	proxies := makeDictList(
+		YamlStrDict{"name": "香港节点", "udp": true},
+		YamlStrDict{"name": "台湾节点", "udp": false},
+		YamlStrDict{"name": "us-node", "udp": true},
+	)
 
 	classified := classifyProxies(proxies, organizerClassifiers)
 
@@ -239,7 +248,7 @@ func TestClassifyProxiesUsesClassifierRegistry(t *testing.T) {
 	if !reflect.DeepEqual(classified["tw"], []string{"台湾节点"}) {
 		t.Fatalf("classified tw = %v", classified["tw"])
 	}
-	if !isHK(proxies["香港节点"]) || isHK(proxies["台湾节点"]) {
+	if !isHK(proxies.get("香港节点")) || isHK(proxies.get("台湾节点")) {
 		t.Fatalf("isHK() matcher is incorrect")
 	}
 	if !reflect.DeepEqual(classified["us"], []string{"us-node"}) {
@@ -276,10 +285,10 @@ func TestApplyBaseTemplateOptionsSetsLogLevel(t *testing.T) {
 
 func TestBuildOrganizerGroupsOnlyEmitsRequestedGroups(t *testing.T) {
 	cfg := Config{Organizer: []string{"udp", "tw", "us"}}
-	proxies := DictList{
-		"台湾节点":    YamlStrDict{"name": "台湾节点", "udp": false},
-		"us-node": YamlStrDict{"name": "us-node", "udp": true},
-	}
+	proxies := makeDictList(
+		YamlStrDict{"name": "台湾节点", "udp": false},
+		YamlStrDict{"name": "us-node", "udp": true},
+	)
 
 	groups := cfg.buildOrganizerGroups("all", proxies)
 	gotNames := make([]string, 0, len(groups))

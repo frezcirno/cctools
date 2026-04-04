@@ -7,24 +7,16 @@ type (
 )
 
 /**
- * DictList is a map of YamlStrDicts, where the key is the name of the YamlStrDict.
- * It is used to store a list of unique-key dictionaries in the YAML file.
- * Example:
- * {
- *   "dict1": {
- *       name: "dict1",
- *       ...
- *   },
- *   "dict2": {
- *       name: "dict2",
- *       ...
- *   }
- * }
+ * DictList is an ordered collection of YamlStrDicts, keyed by name.
+ * It preserves insertion order for deterministic output.
  */
-type DictList map[string]YamlStrDict
+type DictList struct {
+	order []string
+	items map[string]YamlStrDict
+}
 
 func NewDictList(in []any) DictList {
-	dl := DictList{}
+	dl := DictList{items: map[string]YamlStrDict{}}
 	for idx, elm := range in {
 		value, err := asStringAnyMap(elm, fmt.Sprintf("dictlist[%d]", idx))
 		if err != nil {
@@ -34,13 +26,17 @@ func NewDictList(in []any) DictList {
 		if err != nil {
 			panic(err)
 		}
-		dl[name] = YamlStrDict(value)
+		dl.set(name, YamlStrDict(value))
 	}
 	return dl
 }
 
+func NewEmptyDictList() DictList {
+	return DictList{items: map[string]YamlStrDict{}}
+}
+
 func (dl *DictList) get(key string) YamlStrDict {
-	if v, ok := (*dl)[key]; ok {
+	if v, ok := dl.items[key]; ok {
 		return v
 	}
 	return nil
@@ -50,29 +46,52 @@ func (dl *DictList) set(key string, value YamlStrDict) {
 	if value != nil {
 		value["name"] = key
 	}
-	(*dl)[key] = value
+	if _, exists := dl.items[key]; !exists {
+		dl.order = append(dl.order, key)
+	}
+	dl.items[key] = value
+}
+
+func (dl *DictList) del(key string) {
+	if _, ok := dl.items[key]; !ok {
+		return
+	}
+	delete(dl.items, key)
+	for i, k := range dl.order {
+		if k == key {
+			dl.order = append(dl.order[:i], dl.order[i+1:]...)
+			break
+		}
+	}
 }
 
 func (dl *DictList) update(rhs DictList) {
-	for k, v := range rhs {
-		(*dl)[k] = v
+	for _, k := range rhs.order {
+		dl.set(k, rhs.items[k])
 	}
 }
 
-func (dl *DictList) keys() (res []string) {
-	for k := range *dl {
-		res = append(res, k)
-	}
-	return
+func (dl *DictList) keys() []string {
+	res := make([]string, len(dl.order))
+	copy(res, dl.order)
+	return res
 }
 
-func (dl *DictList) values() (res []YamlStrDict) {
-	for _, v := range *dl {
-		res = append(res, v)
+func (dl *DictList) values() []YamlStrDict {
+	res := make([]YamlStrDict, 0, len(dl.order))
+	for _, k := range dl.order {
+		res = append(res, dl.items[k])
 	}
-	return
+	return res
 }
 
 func (dl *DictList) Len() int {
-	return len(*dl)
+	return len(dl.order)
+}
+
+// each iterates over the DictList in insertion order.
+func (dl *DictList) each(fn func(key string, value YamlStrDict)) {
+	for _, k := range dl.order {
+		fn(k, dl.items[k])
+	}
 }

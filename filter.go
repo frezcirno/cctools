@@ -18,12 +18,18 @@ var organizerClassifiers = []struct {
 	{name: "udp", matcher: isUDP},
 }
 
+func proxyName(proxy YamlStrDict) (string, bool) {
+	name, ok := proxy["name"].(string)
+	return name, ok
+}
+
 func isAny(proxy YamlStrDict) bool {
 	return true
 }
 
 func isCN(proxy YamlStrDict) bool {
-	return CN.MatchString(proxy["name"].(string))
+	name, ok := proxyName(proxy)
+	return ok && CN.MatchString(name)
 }
 
 func isOversea(proxy YamlStrDict) bool {
@@ -31,21 +37,21 @@ func isOversea(proxy YamlStrDict) bool {
 }
 
 func isTW(proxy YamlStrDict) bool {
-	return TW.MatchString(proxy["name"].(string))
+	name, ok := proxyName(proxy)
+	return ok && TW.MatchString(name)
 }
 
 func isHK(proxy YamlStrDict) bool {
-	return HK.MatchString(proxy["name"].(string))
+	name, ok := proxyName(proxy)
+	return ok && HK.MatchString(name)
 }
 
 func isUS(proxy YamlStrDict) bool {
-	return US.MatchString(proxy["name"].(string))
+	name, ok := proxyName(proxy)
+	return ok && US.MatchString(name)
 }
 
 func isUDP(proxy YamlStrDict) bool {
-	if udp, ok := proxy["udp"]; ok {
-		return udp.(bool)
-	} else {
-		return false
-	}
+	udp, ok := proxy["udp"].(bool)
+	return ok && udp
 }

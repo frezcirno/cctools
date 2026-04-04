@@ -30,12 +30,18 @@ func download(url *url.URL,
 	if url.Scheme == "file" {
 		var err error
 		if content, err = fsLoad(url.Path); err != nil {
+			if cache_ok && use_cache_on_err {
+				return load_cache(cache_key)
+			}
 			return nil, err
 		}
 	} else if url.Scheme == "base64" {
 		var err error
 		content, err = io.ReadAll(base64.NewDecoder(base64.StdEncoding, strings.NewReader(url.Host)))
 		if err != nil {
+			if cache_ok && use_cache_on_err {
+				return load_cache(cache_key)
+			}
 			return nil, err
 		}
 	} else { // http, https

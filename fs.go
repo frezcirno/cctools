@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -84,7 +85,9 @@ type File struct {
 }
 
 type memFileInfo struct {
-	name string
+	name    string
+	size    int64
+	modtime time.Time
 }
 
 func (fi *memFileInfo) Name() string {
@@ -92,7 +95,7 @@ func (fi *memFileInfo) Name() string {
 }
 
 func (fi *memFileInfo) Size() int64 {
-	return int64(len(OVERLAYFS[fi.name].data))
+	return fi.size
 }
 
 func (fi *memFileInfo) Mode() os.FileMode {
@@ -100,7 +103,7 @@ func (fi *memFileInfo) Mode() os.FileMode {
 }
 
 func (fi *memFileInfo) ModTime() time.Time {
-	return OVERLAYFS[fi.name].modtime
+	return fi.modtime
 }
 
 func (fi *memFileInfo) IsDir() bool {
@@ -111,22 +114,36 @@ func (fi *memFileInfo) Sys() any {
 	return nil
 }
 
-var OVERLAYFS = map[string]File{}
+var (
+	overlayMu sync.RWMutex
+	OVERLAYFS = map[string]File{}
+)
 
 func memfsStore(fspath string, data []byte) {
 	pathKey := resolvePath(fspath)
+	overlayMu.Lock()
 	OVERLAYFS[pathKey] = File{data, time.Now()}
+	overlayMu.Unlock()
 }
 
 func memfsLoad(fspath string) ([]byte, error) {
 	pathKey := resolvePath(fspath)
-	return OVERLAYFS[pathKey].data, nil
+	overlayMu.RLock()
+	f, ok := OVERLAYFS[pathKey]
+	overlayMu.RUnlock()
+	if !ok {
+		return nil, os.ErrNotExist
+	}
+	return f.data, nil
 }
 
 func memfsStat(fspath string) (os.FileInfo, error) {
 	pathKey := resolvePath(fspath)
-	if _, ok := OVERLAYFS[pathKey]; ok {
-		return &memFileInfo{pathKey}, nil
+	overlayMu.RLock()
+	f, ok := OVERLAYFS[pathKey]
+	overlayMu.RUnlock()
+	if !ok {
+		return nil, os.ErrNotExist
 	}
-	return nil, os.ErrNotExist
+	return &memFileInfo{pathKey, int64(len(f.data)), f.modtime}, nil
 }

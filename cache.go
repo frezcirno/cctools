@@ -18,18 +18,14 @@ func load_cache(cache_key string) ([]byte, error) {
 }
 
 func save_cache(cache_key string, content []byte) error {
-	if _, err := os.LookupEnv("DISABLE_CACHE"); !err {
+	if _, ok := os.LookupEnv("DISABLE_CACHE"); ok {
 		return nil
 	}
 
 	os.MkdirAll("./cache", os.ModePerm)
 
 	save_path := "./cache/" + cache_key
-	if f, err := os.Create(save_path); err == nil {
-		defer f.Close()
-		f.Write(content)
-	}
-
+	fsStore(save_path, content)
 	return nil
 }
 
