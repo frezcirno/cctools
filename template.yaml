@@ -384,6 +384,58 @@ rules:
   - GEOSITE,openai,CHATBOT
   - RULE-SET,openai,CHATBOT
   - RULE-SET,chatbot,CHATBOT
+  - DOMAIN,browser-intake-datadoghq.com,CHATBOT
+  - DOMAIN,chat.openai.com.cdn.cloudflare.net,CHATBOT
+  - DOMAIN,openai-api.arkoselabs.com,CHATBOT
+  - DOMAIN,openaicom-api-bdcpf8c6d2e9atf6.z01.azurefd.net,CHATBOT
+  - DOMAIN,openaicomproductionae4b.blob.core.windows.net,CHATBOT
+  - DOMAIN,production-openaicom-storage.azureedge.net,CHATBOT
+  - DOMAIN,ai.google.dev,CHATBOT
+  - DOMAIN,alkalicore-pa.clients6.google.com,CHATBOT
+  - DOMAIN,alkalimakersuite-pa.clients6.google.com,CHATBOT
+  - DOMAIN,webchannel-alkalimakersuite-pa.clients6.google.com,CHATBOT
+  - DOMAIN,geller-pa.googleapis.com,CHATBOT
+  - DOMAIN-SUFFIX,generativelanguage.googleapis.com,CHATBOT
+  - DOMAIN-SUFFIX,proactivebackend-pa.googleapis.com,CHATBOT
+  - DOMAIN-SUFFIX,robinfrontend-pa.googleapis.com,CHATBOT
+  - DOMAIN-SUFFIX,generativeai.google,CHATBOT
+  - DOMAIN-SUFFIX,makersuite.google.com,CHATBOT
+  - DOMAIN-SUFFIX,aistudio.google.com,CHATBOT
+  - DOMAIN-SUFFIX,bard.google.com,CHATBOT
+  - DOMAIN-SUFFIX,gemini.google,CHATBOT
+  - DOMAIN-SUFFIX,gemini.google.com,CHATBOT
+  - DOMAIN-SUFFIX,ai.com,CHATBOT
+  - DOMAIN-SUFFIX,algolia.net,CHATBOT
+  - DOMAIN-SUFFIX,api.statsig.com,CHATBOT
+  - DOMAIN-SUFFIX,auth0.com,CHATBOT
+  - DOMAIN-SUFFIX,chatgpt.com,CHATBOT
+  - DOMAIN-SUFFIX,chatgpt.livekit.cloud,CHATBOT
+  - DOMAIN-SUFFIX,client-api.arkoselabs.com,CHATBOT
+  - DOMAIN-SUFFIX,events.statsigapi.net,CHATBOT
+  - DOMAIN-SUFFIX,featuregates.org,CHATBOT
+  - DOMAIN-SUFFIX,host.livekit.cloud,CHATBOT
+  - DOMAIN-SUFFIX,identrust.com,CHATBOT
+  - DOMAIN-SUFFIX,intercom.io,CHATBOT
+  - DOMAIN-SUFFIX,intercomcdn.com,CHATBOT
+  - DOMAIN-SUFFIX,launchdarkly.com,CHATBOT
+  - DOMAIN-SUFFIX,oaistatic.com,CHATBOT
+  - DOMAIN-SUFFIX,oaiusercontent.com,CHATBOT
+  - DOMAIN-SUFFIX,observeit.net,CHATBOT
+  - DOMAIN-SUFFIX,segment.io,CHATBOT
+  - DOMAIN-SUFFIX,sentry.io,CHATBOT
+  - DOMAIN-SUFFIX,turn.livekit.cloud,CHATBOT
+  - DOMAIN-SUFFIX,openrouter.ai,CHATBOT
+  - DOMAIN-SUFFIX,anthropic.com,CHATBOT
+  - DOMAIN-SUFFIX,claude.ai,CHATBOT
+  - DOMAIN-SUFFIX,claude.com,CHATBOT
+  - DOMAIN-SUFFIX,claudeusercontent.com,CHATBOT
+  - DOMAIN-SUFFIX,claudemcpclient.com,CHATBOT
+  - DOMAIN-SUFFIX,cursor-cdn.com,CHATBOT
+  - DOMAIN-SUFFIX,cursor.com,CHATBOT
+  - DOMAIN-SUFFIX,cursor.sh,CHATBOT
+  - DOMAIN-SUFFIX,cursorapi.com,CHATBOT
+  - DOMAIN-KEYWORD,openai,CHATBOT
+  - DOMAIN-KEYWORD,claude,CHATBOT
   # - DOMAIN-KEYWORD,ipfs,IPFS
 
   # High level patches
