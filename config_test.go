@@ -238,6 +238,8 @@ func TestClassifyProxiesUsesClassifierRegistry(t *testing.T) {
 		YamlStrDict{"name": "香港节点", "udp": true},
 		YamlStrDict{"name": "台湾节点", "udp": false},
 		YamlStrDict{"name": "us-node", "udp": true},
+		YamlStrDict{"name": "sg-node", "udp": false},
+		YamlStrDict{"name": "日本节点", "udp": false},
 	)
 
 	classified := classifyProxies(proxies, organizerClassifiers)
@@ -254,7 +256,13 @@ func TestClassifyProxiesUsesClassifierRegistry(t *testing.T) {
 	if !reflect.DeepEqual(classified["us"], []string{"us-node"}) {
 		t.Fatalf("classified us = %v", classified["us"])
 	}
-	if !reflect.DeepEqual(classified["oversea"], []string{"us-node"}) {
+	if !reflect.DeepEqual(classified["sg"], []string{"sg-node"}) {
+		t.Fatalf("classified sg = %v", classified["sg"])
+	}
+	if !reflect.DeepEqual(classified["jp"], []string{"日本节点"}) {
+		t.Fatalf("classified jp = %v", classified["jp"])
+	}
+	if !reflect.DeepEqual(classified["oversea"], []string{"us-node", "sg-node", "日本节点"}) {
 		t.Fatalf("classified oversea = %v", classified["oversea"])
 	}
 	udpGot := append([]string(nil), classified["udp"]...)

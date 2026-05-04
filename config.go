@@ -427,7 +427,7 @@ func (c *Config) applyBaseTemplateOptions() error {
 
 	if c.TransProxy {
 		if c.RedirPort == 0 {
-			c.RedirPort = 7983
+			c.RedirPort = 7893
 		}
 		if c.TproxyPort == 0 {
 			c.TproxyPort = 7894
@@ -615,11 +615,12 @@ const (
 
 func makeURLTestGroup(name string, proxies []string) YamlStrDict {
 	return YamlStrDict{
-		"name":      name,
-		"type":      "url-test",
-		"proxies":   proxies,
-		"url":       defaultURLTestURL,
-		"interval":  defaultURLTestInterval,
+		"name":     name,
+		"type":     "url-test",
+		"proxies":  proxies,
+		"url":      defaultURLTestURL,
+		"interval": defaultURLTestInterval,
+		// 新节点延迟必须比当前节点低 tolerance 以上才会切换,防止在两个延迟相近的节点间反复横跳
 		"tolerance": defaultURLTestTolerance,
 	}
 }

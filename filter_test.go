@@ -16,6 +16,12 @@ func TestProxyNameMissing(t *testing.T) {
 	if isUS(proxy) {
 		t.Fatal("isUS should return false for proxy without name")
 	}
+	if isSG(proxy) {
+		t.Fatal("isSG should return false for proxy without name")
+	}
+	if isJP(proxy) {
+		t.Fatal("isJP should return false for proxy without name")
+	}
 	if isOversea(proxy) {
 		// isOversea is !isCN, and isCN returns false, so isOversea returns true
 		// This is expected behavior for missing name

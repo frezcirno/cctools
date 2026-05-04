@@ -276,6 +276,12 @@
                   <label class="selectable"><input type="checkbox" id="organizer-us" name="organizer-us">US</label>
                 </div>
                 <div class="checkbox-item">
+                  <label class="selectable"><input type="checkbox" id="organizer-sg" name="organizer-sg">Singapore</label>
+                </div>
+                <div class="checkbox-item">
+                  <label class="selectable"><input type="checkbox" id="organizer-jp" name="organizer-jp">Japan</label>
+                </div>
+                <div class="checkbox-item">
                   <label class="selectable"><input type="checkbox" id="organizer-udp" name="organizer-udp"
                       checked>UDP</label>
                 </div>
@@ -641,6 +647,8 @@ https://101.101.101.101/dns-query
       delete data['organizer-tw'];
       delete data['organizer-oversea'];
       delete data['organizer-us'];
+      delete data['organizer-sg'];
+      delete data['organizer-jp'];
       delete data['organizer-udp'];
 
       // drop empty values so optional fields can stay empty

@@ -208,7 +208,7 @@ func makeProxy() http.Handler {
 		return nil
 	}
 
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstreamURL, err := validateProxyUpstream(r.URL.Query().Get("url"))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)

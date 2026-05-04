@@ -48,6 +48,14 @@ log-level: warning
 # RESTful web API listening address
 external-controller:
 
+
+external-controller-cors:
+  allow-origins:
+    - "https://yacd.haishan.me"
+    - "https://metacubexd.pages.dev"
+    - "https://metacubex.github.io"
+  allow-private-network: true
+
 # A relative path to the configuration directory or an absolute path to a
 # directory in which you put some static web resource. Clash core will then
 # serve it at `http://{{external-controller}}/ui`.
