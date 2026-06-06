@@ -30,7 +30,9 @@ func randomStr(length int) string {
 func downloadUpstream(upstream *url.URL, upstream_name string, ttl_sec int, timeout int, use_cache_on_err bool) (*Airport, error) {
 	ttl := time.Duration(ttl_sec) * time.Second
 	cache_key := make_cache_key(upstream)
-	content, err := download(upstream, upstream_name, ttl, timeout, use_cache_on_err)
+	// Upstreams may legitimately use file:// / base64:// (operator-configured,
+	// token-gated), so local schemes are allowed here.
+	content, err := download(upstream, upstream_name, ttl, timeout, use_cache_on_err, true)
 	if err != nil {
 		log.Printf("Failed to download upstream %v: %v", upstream, err)
 		return nil, err
@@ -66,14 +68,12 @@ func parseUpstream(content []byte) (*Airport, error) {
 	if err != nil {
 		return nil, fmt.Errorf("proxies not found")
 	}
-	proxies := NewDictList(proxyRaw)
-	groupRaw, err := asAnyList(obj["proxy-groups"], "proxy-groups")
+	proxies, err := NewDictList(proxyRaw)
 	if err != nil {
-		return nil, fmt.Errorf("proxy-groups not found")
+		return nil, fmt.Errorf("invalid proxies: %w", err)
 	}
-	groups := NewDictList(groupRaw)
 
-	airport := Airport{proxies, groups}
+	airport := Airport{Proxies: proxies}
 
 	airport.filterProxy(func(m YamlStrDict) bool {
 		for _, b := range PROXY_BLACKLIST {
@@ -92,8 +92,10 @@ func parseUpstream(content []byte) (*Airport, error) {
 func mergeProxies(from, to *Airport) {
 	for _, key := range from.Proxies.keys() {
 		old_key := key
-		for to.Proxies.get(key) != nil {
-			key = old_key + "_" + randomStr(3)
+		// Deterministic suffix (old_2, old_3, ...) so identical inputs always
+		// produce identical names — a random suffix would make output unstable.
+		for i := 2; to.Proxies.get(key) != nil; i++ {
+			key = fmt.Sprintf("%s_%d", old_key, i)
 		}
 		if old_key != key {
 			from.renameProxy(old_key, key)
@@ -102,45 +104,33 @@ func mergeProxies(from, to *Airport) {
 	}
 }
 
-func mergeGroups(from, to *Airport) {
-	for _, key := range from.Groups.keys() {
-		old_key := key
-		for to.Groups.get(key) != nil {
-			key = old_key + "_" + randomStr(3)
-		}
-		if old_key != key {
-			from.renameGroup(old_key, key)
-		}
-		to.Groups.set(key, nil)
-	}
-}
-
 func stackAirports(airports []*Airport) *Airport {
-	merged := &Airport{
-		Proxies: NewEmptyDictList(),
-		Groups:  NewEmptyDictList(),
-	}
+	merged := &Airport{Proxies: NewEmptyDictList()}
 
 	for _, airport := range airports {
 		mergeProxies(airport, merged)
-		airport.Groups.each(func(key string, group YamlStrDict) {
-			if err := merged.groupAddProxies(key, group["proxies"]); err != nil {
-				log.Printf("Failed to merge proxies for group %s: %v", key, err)
-			}
-		})
 	}
 
 	return merged
 }
 
-func resolveAirportNameConflicts(airports map[string]*Airport) {
-	merged := &Airport{
-		Proxies: NewEmptyDictList(),
-		Groups:  NewEmptyDictList(),
+// sortedAirportKeys returns the airport names in a stable order so that all
+// passes over the airports map (conflict resolution, proxy collection, group
+// building) produce deterministic, byte-stable output instead of leaking Go's
+// random map iteration order into the generated config.
+func sortedAirportKeys(airports map[string]*Airport) []string {
+	keys := make([]string, 0, len(airports))
+	for k := range airports {
+		keys = append(keys, k)
 	}
-	for _, airport := range airports {
-		mergeProxies(airport, merged)
-		mergeGroups(airport, merged)
+	sort.Strings(keys)
+	return keys
+}
+
+func resolveAirportNameConflicts(airports map[string]*Airport) {
+	merged := &Airport{Proxies: NewEmptyDictList()}
+	for _, name := range sortedAirportKeys(airports) {
+		mergeProxies(airports[name], merged)
 	}
 }
 
@@ -148,10 +138,9 @@ type Config struct {
 	Template  map[string]any
 	Upstreams map[string]AirportSpec
 
-	Upstream             []string
-	Organizer            []string
-	TopSelect            []string
-	KeepUpstreamSelector bool
+	Upstream  []string
+	Organizer []string
+	TopSelect []string
 
 	PortProxy   bool
 	BindAddress string
@@ -181,7 +170,6 @@ type Config struct {
 	LogLevel string
 
 	RuleProviderTransform RuleProviderTransform
-	CustomRules           []string
 	Platform              Platform
 }
 
@@ -295,6 +283,12 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 	airports := cfg.fetchAirports()
 	resolveAirportNameConflicts(airports)
 	allProxies := collectAllProxies(airports)
+	if allProxies.Len() == 0 {
+		// Fail closed: every selector would otherwise collapse to DIRECT and the
+		// client would silently install a config that routes all traffic
+		// unproxied. Returning an error lets the client keep its last-known-good.
+		return nil, &upstreamUnavailableError{fmt.Errorf("no proxies collected from any configured upstream")}
+	}
 	cfg.Template["proxies"] = allProxies.values()
 	cfg.Template["proxy-groups"] = cfg.buildProxyGroups(airports, allProxies, allSelectors)
 
@@ -316,12 +310,14 @@ func (c *Config) collectSelectors() []string {
 	}
 
 	presetChains := map[string]struct{}{
-		"DIRECT":   {},
-		"REJECT":   {},
-		"PROXY":    {},
-		"UDP":      {},
-		"FALLBACK": {},
-		"CNSITE":   {},
+		"DIRECT":    {},
+		"REJECT":    {},
+		"PASS":      {},
+		"PASS-RULE": {},
+		"PROXY":     {},
+		"UDP":       {},
+		"FALLBACK":  {},
+		"CNSITE":    {},
 	}
 	customSelectors := []string{}
 	for _, ruleItem := range ruleItems {
@@ -451,7 +447,12 @@ func (c *Config) applyBaseTemplateOptions() error {
 		}
 	}
 
-	c.Template["secret"] = c.ExternalControllerSecret
+	// Only override the template's secret when an external controller is being
+	// configured or a secret was explicitly supplied. Otherwise a template that
+	// ships a real secret would be silently wiped to "" on every request.
+	if c.ExternalControllerType != NONE || c.ExternalControllerSecret != "" {
+		c.Template["secret"] = c.ExternalControllerSecret
+	}
 	if c.LogLevel != "" {
 		c.Template["log-level"] = c.LogLevel
 	}
@@ -521,6 +522,15 @@ func (c *Config) fetchAirports() map[string]*Airport {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			// Defense-in-depth: a panic in this worker goroutine (e.g. from an
+			// unexpected type assertion on untrusted upstream content) is NOT
+			// recovered by net/http and would crash the whole process. Contain
+			// it here so one bad upstream is logged and skipped.
+			defer func() {
+				if rec := recover(); rec != nil {
+					log.Printf("Recovered from panic while fetching upstream %s: %v", upstreamCopy.Name, rec)
+				}
+			}()
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
@@ -539,7 +549,7 @@ func (c *Config) fetchAirports() map[string]*Airport {
 				resolvedAirports = append(resolvedAirports, airport)
 			}
 			mergedAirport := stackAirports(resolvedAirports)
-			log.Printf("Finished upstream fetch: name=%s resolved_variants=%d merged_proxies=%d merged_groups=%d", upstreamCopy.Name, len(resolvedAirports), mergedAirport.Proxies.Len(), mergedAirport.Groups.Len())
+			log.Printf("Finished upstream fetch: name=%s resolved_variants=%d merged_proxies=%d", upstreamCopy.Name, len(resolvedAirports), mergedAirport.Proxies.Len())
 			ch <- pair{upstreamCopy.Name, mergedAirport}
 		}()
 	}
@@ -559,8 +569,8 @@ func (c *Config) fetchAirports() map[string]*Airport {
 
 func collectAllProxies(airports map[string]*Airport) DictList {
 	allProxies := NewEmptyDictList()
-	for _, airport := range airports {
-		allProxies.update(airport.Proxies)
+	for _, name := range sortedAirportKeys(airports) {
+		allProxies.update(airports[name].Proxies)
 	}
 	return allProxies
 }
@@ -576,8 +586,8 @@ func (c *Config) buildProxyGroups(airports map[string]*Airport, allProxies DictL
 
 	instanceURLTestGroups = append(instanceURLTestGroups, c.buildOrganizerGroups(groupKey, allProxies)...)
 
-	for name, airport := range airports {
-		airportProxies := airport.Proxies
+	for _, name := range sortedAirportKeys(airports) {
+		airportProxies := airports[name].Proxies
 		if airportProxies.Len() > 0 {
 			airportProxyKeys := airportProxies.keys()
 			sort.Strings(airportProxyKeys)
@@ -733,7 +743,9 @@ func (c *Config) inlineRuleProviders(r *http.Request) error {
 			return err
 		}
 
-		content, err := download(url, fmt.Sprintf("rule-%s.yaml", ruleSetName), 24*time.Hour, 10, true)
+		// Rule-provider URLs come from the template and are fetched at request
+		// time: restrict to http/https (no local-file reads).
+		content, err := download(url, fmt.Sprintf("rule-%s.yaml", ruleSetName), 24*time.Hour, 10, true, false)
 		if err != nil {
 			log.Printf("Failed to retrieve rule provider: %v", err)
 			return err
@@ -772,6 +784,13 @@ func (c *Config) inlineRuleProviders(r *http.Request) error {
 		}
 		if rule_segs[0] != "RULE-SET" {
 			rules = append(rules, rule)
+			continue
+		}
+		// A well-formed RULE-SET rule is "RULE-SET,<name>,<action>". Without the
+		// action segment there is nothing to expand to — skip rather than panic
+		// on rule_segs[2].
+		if len(rule_segs) < 3 {
+			log.Printf("Skipping malformed RULE-SET rule (no action): %q", rule)
 			continue
 		}
 

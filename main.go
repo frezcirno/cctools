@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"crypto/subtle"
 	"fmt"
 	"io"
 	"log"
@@ -8,9 +10,11 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"os/signal"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -20,17 +24,14 @@ var token = os.Getenv("TOKEN")
 
 func init() {
 	for _, fp := range []string{"./upstreams.yaml", "./template.yaml"} {
-		f, err := os.Open(fp)
+		src, err := os.ReadFile(fp)
 		if err != nil {
-			log.Panicf("Failed to open %s: %v\n", fp, err)
+			// Don't crash on boot: the file may be supplied later via the
+			// token-gated upload endpoint, and on a read-only/serverless FS it
+			// may live elsewhere. Requests surface a clear error until it exists.
+			log.Printf("Warning: %s not loaded at startup: %v", fp, err)
+			continue
 		}
-
-		src, err := io.ReadAll(f)
-		f.Close()
-		if err != nil {
-			log.Panicf("Failed to read %s: %v\n", fp, err)
-		}
-
 		fsStore(fp, src)
 	}
 }
@@ -41,9 +42,12 @@ func logRequest(r *http.Request) {
 		log.Printf("Failed to dump request: %v\n", err)
 		return
 	}
-	// Sanitize sensitive data before logging
+	// Sanitize sensitive data before logging. Covered as both query params
+	// (field=value) and header values (Field: value): "url" hides the /convert
+	// subscription URL (which embeds tokens), "authorization"/"x-auth-token"
+	// hide the file-op credentials.
 	dumpStr := string(requestDump)
-	sensitiveFields := []string{"token", "secret", "external_controller_addr", "nameserver_policy"}
+	sensitiveFields := []string{"token", "secret", "external_controller_addr", "nameserver_policy", "url", "authorization", "x-auth-token"}
 	for _, field := range sensitiveFields {
 		// Sanitize query parameters
 		re := regexp.MustCompile(`(?i)` + field + `=([^&\s]+)`)
@@ -184,10 +188,16 @@ func getBoolOrDefault(query url.Values, key string, def bool) (bool, error) {
 }
 
 var knownConfigQueryKeys = map[string]struct{}{
-	"upstream":                   {},
-	"organizer":                  {},
-	"top_select":                 {},
+	"upstream":   {},
+	"organizer":  {},
+	"top_select": {},
+	// Accepted but currently ignored by the backend (the front-end still sends
+	// these). Wiring them up — or removing the corresponding form controls — is
+	// tracked separately; they are whitelisted here only to avoid per-request
+	// "unrecognized query parameter" log spam.
 	"keep_upstream_selector":     {},
+	"custom_rules":               {},
+	"tun_auto_route":             {},
 	"port_proxy":                 {},
 	"bind_address":               {},
 	"port":                       {},
@@ -210,7 +220,6 @@ var knownConfigQueryKeys = map[string]struct{}{
 	"tun":                        {},
 	"tun_stack":                  {},
 	"rule_provider_transform":    {},
-	"custom_rules":               {},
 	"log_level":                  {},
 }
 
@@ -223,6 +232,11 @@ func warnUnknownQueryParams(query url.Values) {
 }
 
 type badRequestError struct{ error }
+
+// upstreamUnavailableError signals that no usable proxy data could be collected
+// from any configured upstream, so the request should fail (502) rather than
+// return a syntactically valid but proxy-less config.
+type upstreamUnavailableError struct{ error }
 
 func buildConfig(r *http.Request) ([]byte, error) {
 	query := r.URL.Query()
@@ -241,9 +255,6 @@ func buildConfig(r *http.Request) ([]byte, error) {
 	c.Upstream = getStringArray(query, "upstream")
 	c.Organizer = getStringArray(query, "organizer")
 	c.TopSelect = getStringArray(query, "top_select")
-	if c.KeepUpstreamSelector, err = getBoolOrDefault(query, "keep_upstream_selector", false); err != nil {
-		return nil, &badRequestError{err}
-	}
 
 	if c.PortProxy, err = getBoolOrDefault(query, "port_proxy", false); err != nil {
 		return nil, &badRequestError{err}
@@ -338,6 +349,9 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if _, ok := err.(*badRequestError); ok {
 			http.Error(w, err.Error(), http.StatusBadRequest)
+		} else if _, ok := err.(*upstreamUnavailableError); ok {
+			log.Printf("Upstream unavailable: %v\n", err)
+			http.Error(w, err.Error(), http.StatusBadGateway)
 		} else {
 			log.Printf("Internal Server Error: %v\n", err)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -350,6 +364,14 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleFileOp(w http.ResponseWriter, r *http.Request) {
+	// Fail closed: if no TOKEN is configured, the read/write endpoints are
+	// disabled entirely rather than open to everyone (an empty token must never
+	// authenticate an empty credential).
+	if token == "" {
+		http.Error(w, "file operations are disabled: TOKEN is not configured", http.StatusForbidden)
+		return
+	}
+
 	// Support multiple authentication methods: query token, Authorization header, X-Auth-Token header
 	authToken := r.URL.Query().Get("token")
 	if authToken == "" {
@@ -361,14 +383,18 @@ func handleFileOp(w http.ResponseWriter, r *http.Request) {
 	if authToken == "" {
 		authToken = r.Header.Get("X-Auth-Token")
 	}
-	if authToken != token {
+	if subtle.ConstantTimeCompare([]byte(authToken), []byte(token)) != 1 {
 		http.Error(w, "", http.StatusForbidden)
 		return
 	}
 
 	path := r.URL.Path[1:]
 	if r.Method == http.MethodGet {
-		target_file, _ := fsLoad(path)
+		target_file, err := fsLoad(path)
+		if err != nil {
+			http.Error(w, "Not Found", http.StatusNotFound)
+			return
+		}
 		w.Header().Set("Content-Type", "application/x-yaml")
 		w.Write(target_file)
 		return
@@ -393,22 +419,65 @@ func handleFileOp(w http.ResponseWriter, r *http.Request) {
 	fsStore(path, data)
 }
 
+// recoverMiddleware turns any panic that escapes a handler into a 500 instead
+// of a dropped connection, so a single bad request can never take the server
+// down. (Panics in handler-spawned goroutines must still be recovered at their
+// own goroutine boundary — see fetchAirports.)
+func recoverMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("Recovered from panic handling %s %s: %v", r.Method, r.URL.Path, rec)
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
 func main() {
 	// 设置日志前缀和输出位置
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 
-	http.HandleFunc("/clash/config.yaml", handleConfig)
-	http.HandleFunc("/upstreams.yaml", handleFileOp)
-	http.HandleFunc("/template.yaml", handleFileOp)
-	http.HandleFunc("/rule-providers", handleRuleProviders)
-	http.Handle("/convert", makeProxy())
+	mux := http.NewServeMux()
+	mux.HandleFunc("/clash/config.yaml", handleConfig)
+	mux.HandleFunc("/upstreams.yaml", handleFileOp)
+	mux.HandleFunc("/template.yaml", handleFileOp)
+	mux.HandleFunc("/rule-providers", handleRuleProviders)
+	mux.Handle("/convert", makeProxy())
 
 	listenAddr := os.Getenv("LISTEN_ADDR")
 	if listenAddr == "" {
 		listenAddr = "127.0.0.1:9000"
 	}
+
+	srv := &http.Server{
+		Addr:              listenAddr,
+		Handler:           recoverMiddleware(mux),
+		ReadHeaderTimeout: 10 * time.Second, // primary Slowloris defense
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      120 * time.Second, // generous: config generation fetches upstreams
+		IdleTimeout:       120 * time.Second,
+	}
+
+	// Graceful shutdown on SIGINT/SIGTERM.
+	idleClosed := make(chan struct{})
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+		<-sigCh
+		log.Println("Shutting down...")
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			log.Printf("Graceful shutdown failed: %v", err)
+		}
+		close(idleClosed)
+	}()
+
 	log.Printf("Starting server on %s...\n", listenAddr)
-	if err := http.ListenAndServe(listenAddr, nil); err != nil {
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
+	<-idleClosed
 }

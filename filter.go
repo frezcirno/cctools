@@ -27,10 +27,6 @@ func proxyName(proxy YamlStrDict) (string, bool) {
 	return name, ok
 }
 
-func isAny(proxy YamlStrDict) bool {
-	return true
-}
-
 func isCN(proxy YamlStrDict) bool {
 	name, ok := proxyName(proxy)
 	return ok && CN.MatchString(name)

@@ -96,6 +96,22 @@ func TestDictListGetMissing(t *testing.T) {
 	}
 }
 
+func TestNewDictListRejectsMalformedInput(t *testing.T) {
+	if _, err := NewDictList([]any{"not-a-map"}); err == nil {
+		t.Error("expected error for non-map element, got nil")
+	}
+	if _, err := NewDictList([]any{map[string]any{"type": "ss"}}); err == nil {
+		t.Error("expected error for element missing 'name', got nil")
+	}
+	dl, err := NewDictList([]any{map[string]any{"name": "ok", "v": 1}})
+	if err != nil {
+		t.Fatalf("valid input errored: %v", err)
+	}
+	if dl.Len() != 1 || dl.get("ok") == nil {
+		t.Fatalf("valid input not stored: len=%d", dl.Len())
+	}
+}
+
 func TestDictListEach(t *testing.T) {
 	dl := NewEmptyDictList()
 	dl.set("x", YamlStrDict{"name": "x"})

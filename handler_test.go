@@ -16,10 +16,9 @@ func TestHandleConfigNoQueryServesHTML(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
 	}
-	body := w.Body.String()
-	if !strings.Contains(body, "<html") && !strings.Contains(body, "<!DOCTYPE") && !strings.Contains(body, "<HTML") {
-		// index.html should contain HTML content
-		// If the file doesn't exist, we'll get a 404 which is also acceptable in test env
+	body := strings.ToLower(w.Body.String())
+	if !strings.Contains(body, "<html") && !strings.Contains(body, "<!doctype") {
+		t.Fatalf("expected index.html HTML content, got %d bytes without an HTML marker", len(body))
 	}
 }
 
@@ -57,6 +56,54 @@ func TestHandleFileOpForbiddenWithWrongToken(t *testing.T) {
 
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", w.Code)
+	}
+}
+
+// TestHandleFileOpDeniesWhenTokenUnset guards the empty-TOKEN fail-open bug:
+// with no TOKEN configured, file operations must be denied, not granted.
+func TestHandleFileOpDeniesWhenTokenUnset(t *testing.T) {
+	oldToken := token
+	token = ""
+	defer func() { token = oldToken }()
+
+	for _, target := range []string{
+		"/upstreams.yaml",            // no credentials at all
+		"/upstreams.yaml?token=",     // explicit empty token
+		"/template.yaml?token=guess", // any token, since none is configured
+	} {
+		req := httptest.NewRequest("GET", target, nil)
+		w := httptest.NewRecorder()
+		handleFileOp(w, req)
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("GET %s with TOKEN unset: status = %d, want 403", target, w.Code)
+		}
+	}
+}
+
+// TestHandleFileOpAcceptsCorrectToken checks each accepted credential channel
+// gets past auth (status is not 403) when the token matches.
+func TestHandleFileOpAcceptsCorrectToken(t *testing.T) {
+	oldToken := token
+	token = "secret-token"
+	defer func() { token = oldToken }()
+
+	mk := func(setup func(*http.Request)) int {
+		req := httptest.NewRequest("GET", "/upstreams.yaml", nil)
+		setup(req)
+		w := httptest.NewRecorder()
+		handleFileOp(w, req)
+		return w.Code
+	}
+
+	channels := map[string]func(*http.Request){
+		"query":        func(r *http.Request) { r.URL.RawQuery = "token=secret-token" },
+		"bearer":       func(r *http.Request) { r.Header.Set("Authorization", "Bearer secret-token") },
+		"x-auth-token": func(r *http.Request) { r.Header.Set("X-Auth-Token", "secret-token") },
+	}
+	for name, setup := range channels {
+		if code := mk(setup); code == http.StatusForbidden {
+			t.Errorf("channel %s: got 403 with correct token, want auth to pass", name)
+		}
 	}
 }
 

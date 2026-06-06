@@ -30,6 +30,12 @@ func save_cache(cache_key string, content []byte) error {
 }
 
 func cache_is_ok(cache_key string, ttl time.Duration) (bool, error) {
+	// When caching is disabled, never treat any cache entry as valid so reads
+	// always go to the source (DISABLE_CACHE already skips writes).
+	if _, ok := os.LookupEnv("DISABLE_CACHE"); ok {
+		return false, nil
+	}
+
 	save_path := "./cache/" + cache_key
 
 	fi, err := fsStat(save_path)

@@ -15,20 +15,23 @@ type DictList struct {
 	items map[string]YamlStrDict
 }
 
-func NewDictList(in []any) DictList {
+// NewDictList builds a DictList from a list of YAML maps, keyed by each map's
+// "name" field. It returns an error (rather than panicking) on malformed input
+// so that untrusted upstream content can be rejected gracefully.
+func NewDictList(in []any) (DictList, error) {
 	dl := DictList{items: map[string]YamlStrDict{}}
 	for idx, elm := range in {
 		value, err := asStringAnyMap(elm, fmt.Sprintf("dictlist[%d]", idx))
 		if err != nil {
-			panic(err)
+			return DictList{}, err
 		}
 		name, err := asString(value["name"], fmt.Sprintf("dictlist[%d].name", idx))
 		if err != nil {
-			panic(err)
+			return DictList{}, err
 		}
 		dl.set(name, YamlStrDict(value))
 	}
-	return dl
+	return dl, nil
 }
 
 func NewEmptyDictList() DictList {

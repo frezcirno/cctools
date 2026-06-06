@@ -1,12 +1,37 @@
 package main
 
 import (
+	"bytes"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 )
+
+// writeTempUpstream writes a minimal valid Clash upstream YAML to a temp file
+// and returns a file:// URL pointing at it, for exercising the fetch pipeline
+// without network access.
+func writeTempUpstream(t *testing.T, proxiesYAML string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "upstream.yaml")
+	if err := os.WriteFile(path, []byte(proxiesYAML), 0644); err != nil {
+		t.Fatalf("write temp upstream: %v", err)
+	}
+	return "file://" + path
+}
+
+const minimalUpstreamYAML = `proxies:
+  - name: node1
+    type: ss
+    server: 1.2.3.4
+    port: 8388
+    cipher: aes-256-gcm
+    password: secret
+proxy-groups: []
+`
 
 func TestCollectSelectorsIncludesCustomChainsInOrder(t *testing.T) {
 	cfg := Config{
@@ -129,9 +154,11 @@ func TestGenerateDoesNotMutateOriginalTemplate(t *testing.T) {
 		},
 	}
 
+	upstreamURL := writeTempUpstream(t, minimalUpstreamYAML)
 	cfg := Config{
 		Template:                 originalTemplate,
-		Upstreams:                map[string]AirportSpec{},
+		Upstream:                 []string{"all"},
+		Upstreams:                map[string]AirportSpec{"t": {Name: "t", Urls: []string{upstreamURL}}},
 		ExternalControllerSecret: "secret-1",
 		RuleProviderTransform:    RPT_NONE,
 		PortProxy:                true,
@@ -288,6 +315,75 @@ func TestApplyBaseTemplateOptionsSetsLogLevel(t *testing.T) {
 	}
 	if cfg.Template["log-level"] != "debug" {
 		t.Fatalf("log-level = %v, want debug", cfg.Template["log-level"])
+	}
+}
+
+// TestParseUpstreamRejectsMalformedProxiesWithoutPanicking guards the bug where
+// malformed third-party YAML used to panic the fetch goroutine and crash the
+// whole process. parseUpstream must now return an error instead.
+func TestParseUpstreamRejectsMalformedProxiesWithoutPanicking(t *testing.T) {
+	cases := map[string]string{
+		"null element":   "proxies: [null]\n",
+		"scalar element": "proxies:\n  - just-a-string\n",
+		"missing name":   "proxies:\n  - {type: ss, server: 1.2.3.4}\n",
+	}
+	for name, content := range cases {
+		if _, err := parseUpstream([]byte(content)); err == nil {
+			t.Errorf("%s: parseUpstream returned nil error, want error (must not panic)", name)
+		}
+	}
+
+	// A well-formed upstream with no proxy-groups should still parse fine.
+	if _, err := parseUpstream([]byte(minimalUpstreamYAML)); err != nil {
+		t.Fatalf("valid upstream errored: %v", err)
+	}
+}
+
+// TestGenerateIsDeterministic verifies identical requests produce byte-identical
+// output, including a stable suffix for cross-upstream name collisions.
+func TestGenerateIsDeterministic(t *testing.T) {
+	t.Setenv("DISABLE_CACHE", "1")
+
+	up1 := writeTempUpstream(t, `proxies:
+  - {name: shared, type: ss, server: 1.1.1.1, port: 1, cipher: aes-256-gcm, password: x}
+  - {name: a-only, type: ss, server: 1.1.1.2, port: 1, cipher: aes-256-gcm, password: x}
+`)
+	up2 := writeTempUpstream(t, `proxies:
+  - {name: shared, type: ss, server: 2.2.2.1, port: 1, cipher: aes-256-gcm, password: x}
+  - {name: b-only, type: ss, server: 2.2.2.2, port: 1, cipher: aes-256-gcm, password: x}
+`)
+
+	newCfg := func() Config {
+		return Config{
+			Template:  map[string]any{"rules": []any{"MATCH,PROXY"}, "proxy-groups": []any{}, "proxies": []any{}},
+			Upstream:  []string{"all"},
+			Upstreams: map[string]AirportSpec{"aaa": {Name: "aaa", Urls: []string{up1}}, "bbb": {Name: "bbb", Urls: []string{up2}}},
+		}
+	}
+	req := httptest.NewRequest("GET", "http://example.com/clash/config.yaml", nil)
+
+	render := func() []byte {
+		cfg := newCfg()
+		out, err := cfg.generate(req)
+		if err != nil {
+			t.Fatalf("generate() error = %v", err)
+		}
+		b, err := yaml.Marshal(out)
+		if err != nil {
+			t.Fatalf("marshal error = %v", err)
+		}
+		return b
+	}
+
+	first := render()
+	for i := 0; i < 3; i++ {
+		if got := render(); !bytes.Equal(first, got) {
+			t.Fatalf("generate() output is not deterministic across runs")
+		}
+	}
+	// The "bbb" airport's colliding "shared" proxy must get the deterministic suffix.
+	if !bytes.Contains(first, []byte("shared_2")) {
+		t.Fatalf("expected deterministic collision suffix 'shared_2' in output:\n%s", first)
 	}
 }
 

@@ -10,20 +10,35 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"syscall"
 	"time"
 )
 
-func convertRawListToRuleProvider(rawList []byte) []byte {
+// convertRawListToRuleProvider turns a raw newline-delimited rule list into a
+// Clash rule-provider document under a top-level `payload:` key. It always emits
+// a valid `payload:` mapping (an empty list when there are no rules), so a
+// transiently empty or comment-only upstream cannot produce invalid YAML. The
+// returned bool reports whether any actual rule was present (used to avoid
+// caching degenerate output).
+func convertRawListToRuleProvider(rawList []byte) ([]byte, bool) {
 	rules := make([][]byte, 0)
 	lines := bytes.Split(rawList, []byte("\n"))
 
+	hasRule := false
 	for _, l := range lines {
 		l = bytes.TrimSpace(l)
 		if len(l) == 0 || bytes.HasPrefix(l, []byte("#")) {
 			rules = append(rules, l)
 		} else {
 			rules = append(rules, []byte(" - "+string(l)))
+			hasRule = true
 		}
+	}
+
+	if !hasRule {
+		// No rules: emit a valid empty payload, preserving any leading comments.
+		rules = append(rules, []byte("payload: []"))
+		return bytes.Join(rules, []byte("\n")), false
 	}
 
 	for i := range rules {
@@ -33,11 +48,80 @@ func convertRawListToRuleProvider(rawList []byte) []byte {
 		}
 	}
 
-	return bytes.Join(rules, []byte("\n"))
+	return bytes.Join(rules, []byte("\n")), true
 }
 
+func mustParseCIDR(s string) *net.IPNet {
+	_, n, err := net.ParseCIDR(s)
+	if err != nil {
+		panic(err)
+	}
+	return n
+}
+
+// Ranges net.IP.IsPrivate() does not cover but that we still want to block.
+var (
+	cgnatRange     = mustParseCIDR("100.64.0.0/10") // RFC 6598 carrier-grade NAT
+	ietfProtoRange = mustParseCIDR("192.0.0.0/24")  // RFC 6890 IETF protocol assignments
+)
+
 func isDisallowedUpstreamIP(ip net.IP) bool {
-	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast()
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
+		return true
+	}
+	// To4 also normalizes IPv4-mapped IPv6 (::ffff:a.b.c.d) to its v4 form.
+	if ip4 := ip.To4(); ip4 != nil {
+		if cgnatRange.Contains(ip4) || ietfProtoRange.Contains(ip4) {
+			return true
+		}
+	}
+	return false
+}
+
+// safeDialer rejects connections to disallowed IPs at dial time — after DNS
+// resolution, on the actual address about to be connected. This closes the
+// TOCTOU / DNS-rebinding gap that a pre-flight net.LookupIP check leaves open,
+// and (because it runs for every connection) also re-validates redirect hops.
+var safeDialer = &net.Dialer{
+	Timeout:   10 * time.Second,
+	KeepAlive: 30 * time.Second,
+	Control: func(network, address string, _ syscall.RawConn) error {
+		host, _, err := net.SplitHostPort(address)
+		if err != nil {
+			return err
+		}
+		ip := net.ParseIP(host)
+		if ip == nil {
+			return fmt.Errorf("cannot parse dial address %q", address)
+		}
+		if isDisallowedUpstreamIP(ip) {
+			return fmt.Errorf("disallowed dial IP %s", ip)
+		}
+		return nil
+	},
+}
+
+var safeTransport = &http.Transport{
+	Proxy:                 http.ProxyFromEnvironment,
+	DialContext:           safeDialer.DialContext,
+	ForceAttemptHTTP2:     true,
+	MaxIdleConns:          100,
+	IdleConnTimeout:       90 * time.Second,
+	TLSHandshakeTimeout:   10 * time.Second,
+	ExpectContinueTimeout: 1 * time.Second,
+}
+
+// safeHTTPClient is the shared client for all outbound fetches of untrusted
+// URLs (upstreams and rule-providers). Redirects are followed but every hop is
+// re-validated by safeDialer.Control.
+var safeHTTPClient = &http.Client{
+	Transport: safeTransport,
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return fmt.Errorf("stopped after 10 redirects")
+		}
+		return nil
+	},
 }
 
 func validateProxyUpstream(raw string) (*url.URL, error) {
@@ -128,7 +212,7 @@ func handleRuleProviders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	content, err := download(parsedURL, fmt.Sprintf("rule-%s.yaml", rule_set_name), 5*365*24*time.Hour, 10, true)
+	content, err := download(parsedURL, fmt.Sprintf("rule-%s.yaml", rule_set_name), 5*365*24*time.Hour, 10, true, false)
 	if err != nil {
 		log.Printf("Failed to download rule-provider: %v\n", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -137,12 +221,6 @@ func handleRuleProviders(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/x-yaml")
 	w.Write(content)
-}
-
-type roundTripperFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
-	return f(req)
 }
 
 func makeProxy() http.Handler {
@@ -170,12 +248,10 @@ func makeProxy() http.Handler {
 		req.Header["Accept-Encoding"] = nil
 	}
 
-	revProxy.Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
-		if _, err := validateProxyUpstream(req.URL.String()); err != nil {
-			return nil, err
-		}
-		return http.DefaultTransport.RoundTrip(req)
-	})
+	// safeTransport re-validates the resolved IP at dial time (see safeDialer),
+	// so this also rejects DNS-rebinding to internal addresses, not just the
+	// pre-flight hostname check done in the Director.
+	revProxy.Transport = safeTransport
 
 	revProxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -187,16 +263,23 @@ func makeProxy() http.Handler {
 		}
 
 		buf := new(bytes.Buffer)
-		buf.ReadFrom(resp.Body)
+		if _, err := buf.ReadFrom(io.LimitReader(resp.Body, maxResponseBytes+1)); err != nil {
+			return err
+		}
+		if int64(buf.Len()) > maxResponseBytes {
+			return fmt.Errorf("/convert upstream response exceeds %d bytes", maxResponseBytes)
+		}
 
 		b := buf.Bytes()
-		newb := convertRawListToRuleProvider(b)
+		newb, hasRules := convertRawListToRuleProvider(b)
 		newbuf := bytes.NewBuffer(newb)
 
-		if resp.Request != nil && resp.Request.URL != nil {
+		// Don't cache degenerate (empty / comment-only) conversions: a transient
+		// empty upstream response would otherwise poison the cache for 24h.
+		if hasRules && resp.Request != nil && resp.Request.URL != nil {
 			cacheKey := make_cache_key(resp.Request.URL)
 			if err := save_cache(cacheKey, newb); err != nil {
-				log.Printf("Failed to save /convert cache for %s: %v", resp.Request.URL.String(), err)
+				log.Printf("Failed to save /convert cache for %s: %v", redactURL(resp.Request.URL), err)
 			}
 		}
 
