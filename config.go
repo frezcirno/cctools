@@ -624,12 +624,21 @@ const (
 )
 
 func makeURLTestGroup(name string, proxies []string) YamlStrDict {
+	var url string = defaultURLTestURL
+	var interval int = defaultURLTestInterval
+	if strings.Contains(strings.ToLower(name), "-us") {
+		url = "https://claude.ai"
+		interval = 1800
+	} else if strings.Contains(strings.ToLower(name), "-tw") {
+		url = "https://ani.gamer.com.tw/"
+		interval = 1800
+	}
 	return YamlStrDict{
 		"name":     name,
 		"type":     "url-test",
 		"proxies":  proxies,
-		"url":      defaultURLTestURL,
-		"interval": defaultURLTestInterval,
+		"url":      url,
+		"interval": interval,
 		// 新节点延迟必须比当前节点低 tolerance 以上才会切换,防止在两个延迟相近的节点间反复横跳
 		"tolerance": defaultURLTestTolerance,
 	}
