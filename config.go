@@ -220,6 +220,35 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("invalid log_level: %s", c.LogLevel)
 		}
 	}
+
+	// The front-end form is the single source of truth: when a section is
+	// enabled it always sends the fields that section needs. A missing field
+	// here therefore means a malformed/incomplete request, which we reject
+	// (400) rather than silently emitting a broken config.
+	if c.PortProxy && c.HttpPort == 0 && c.SocksPort == 0 && c.MixedPort == 0 {
+		return fmt.Errorf("port_proxy is enabled but no listening port (port/socks_port/mixed_port) was provided")
+	}
+	if c.TransProxy && c.RedirPort == 0 && c.TproxyPort == 0 {
+		return fmt.Errorf("tproxy is enabled but neither redir_port nor tproxy_port was provided")
+	}
+	if c.Dns {
+		if c.DnsListen == "" {
+			return fmt.Errorf("dns is enabled but dns_listen is missing")
+		}
+		if c.EnhancedMode == "" {
+			return fmt.Errorf("dns is enabled but enhanced_mode is missing")
+		}
+		if len(c.Nameserver) == 0 {
+			return fmt.Errorf("dns is enabled but nameserver is missing")
+		}
+	}
+	if c.Tun && c.TunStack == "" {
+		return fmt.Errorf("tun is enabled but tun_stack is missing")
+	}
+	if c.ExternalControllerType != NONE && c.ExternalControllerAddr == "" {
+		return fmt.Errorf("external_controller_type=%q requires external_controller_addr", c.ExternalControllerType)
+	}
+
 	return nil
 }
 
@@ -406,9 +435,15 @@ func ruleTargetIndex(parts []string) (int, bool) {
 
 func (c *Config) applyBaseTemplateOptions() error {
 	log.Printf("Applying base template options: port_proxy=%t trans_proxy=%t external_controller=%s", c.PortProxy, c.TransProxy, c.ExternalControllerType)
+	// Pass-through, not defaulting: a value is written to the template only when
+	// it was actually provided. Defaults live in the front-end form (which now
+	// always sends them) or in defaultTemplate() (template.go) — never
+	// hardcoded here.
 	if c.PortProxy {
 		c.Template["allow-lan"] = c.AllowLan
-		c.Template["bind-address"] = c.BindAddress
+		if c.BindAddress != "" {
+			c.Template["bind-address"] = c.BindAddress
+		}
 
 		if c.HttpPort != 0 {
 			c.Template["port"] = c.HttpPort
@@ -422,12 +457,6 @@ func (c *Config) applyBaseTemplateOptions() error {
 	}
 
 	if c.TransProxy {
-		if c.RedirPort == 0 {
-			c.RedirPort = 7893
-		}
-		if c.TproxyPort == 0 {
-			c.TproxyPort = 7894
-		}
 		if c.RedirPort != 0 {
 			c.Template["redir-port"] = c.RedirPort
 		}
@@ -470,13 +499,28 @@ func (c *Config) applyDNSOptions() error {
 		return err
 	}
 
+	// Pass-through: only override a field when the caller supplied it, otherwise
+	// the template's own value (template.yaml dns block) stands. This keeps the
+	// backend from injecting defaults or wiping template values to empty.
 	dns["enable"] = true
-	dns["listen"] = c.DnsListen
-	dns["enhanced-mode"] = c.EnhancedMode
-	dns["default-nameserver"] = c.DefaultNameserver
-	dns["nameserver"] = c.Nameserver
-	dns["fallback"] = c.Fallback
-	dns["nameserver-policy"] = c.NameserverPolicy
+	if c.DnsListen != "" {
+		dns["listen"] = c.DnsListen
+	}
+	if c.EnhancedMode != "" {
+		dns["enhanced-mode"] = c.EnhancedMode
+	}
+	if len(c.DefaultNameserver) > 0 {
+		dns["default-nameserver"] = c.DefaultNameserver
+	}
+	if len(c.Nameserver) > 0 {
+		dns["nameserver"] = c.Nameserver
+	}
+	if len(c.Fallback) > 0 {
+		dns["fallback"] = c.Fallback
+	}
+	if len(c.NameserverPolicy) > 0 {
+		dns["nameserver-policy"] = c.NameserverPolicy
+	}
 	c.Template["dns"] = dns
 	return nil
 }
@@ -493,7 +537,9 @@ func (c *Config) applyTunOptions() error {
 	}
 
 	tun["enable"] = true
-	tun["stack"] = c.TunStack
+	if c.TunStack != "" {
+		tun["stack"] = c.TunStack
+	}
 	if c.Platform == Windows {
 		tun["auto-redir"] = false
 	}

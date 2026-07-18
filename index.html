@@ -706,6 +706,41 @@ https://101.101.101.101/dns-query
       delete data['organizer-jp'];
       delete data['organizer-udp'];
 
+      // Single source of truth for defaults: the form placeholders. When a
+      // section is enabled but its field is left blank, send the placeholder
+      // value so the backend never has to invent a default of its own.
+      // (nameserver_policy is intentionally excluded — its placeholder is an
+      // example, not a default.)
+      const fillDefault = (fieldId, key) => {
+        if (data[key] && data[key] !== '') {
+          return;
+        }
+        const field = document.getElementById(fieldId);
+        const ph = field && field.placeholder ? field.placeholder.trim() : '';
+        if (ph) {
+          data[key] = ph;
+        }
+      };
+      if (data.port_proxy) {
+        fillDefault('bind_address', 'bind_address');
+        fillDefault('port', 'port');
+        fillDefault('socks_port', 'socks_port');
+        fillDefault('mixed_port', 'mixed_port');
+      }
+      if (data.tproxy) {
+        fillDefault('redir_port', 'redir_port');
+        fillDefault('tproxy_port', 'tproxy_port');
+      }
+      if (data.dns) {
+        fillDefault('dns_listen', 'dns_listen');
+        fillDefault('default_nameserver', 'default_nameserver');
+        fillDefault('nameserver', 'nameserver');
+        fillDefault('fallback', 'fallback');
+      }
+      if (data.external_controller_type && data.external_controller_type !== 'none') {
+        fillDefault('external_controller_addr', 'external_controller_addr');
+      }
+
       // drop empty values so optional fields can stay empty
       Object.keys(data).forEach(key => {
         if (data[key] === '') {
@@ -763,7 +798,7 @@ https://101.101.101.101/dns-query
     // fields not listed here keep their current value. Edit freely.
     const PRESETS = {
       windows: { port_proxy: true, tproxy: false, dns: true, tun: true, tun_stack: 'gvisor' },
-      linux: { port_proxy: true, tproxy: true, dns: true, tun: true, tun_stack: 'system' },
+      linux: { port_proxy: true, tproxy: false, dns: true, tun: true, tun_stack: 'system' },
       macos: { port_proxy: true, tproxy: false, dns: true, tun: true, tun_stack: 'system' },
       android: { port_proxy: false, tproxy: false, dns: true, tun: true, tun_stack: 'gvisor' },
       ipad: { port_proxy: false, tproxy: false, dns: true, tun: true, tun_stack: 'gvisor' },
