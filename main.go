@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -363,6 +365,70 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 	w.Write(out)
 }
 
+// handleUpstreamList returns the selectable upstreams (enabled only) as JSON so
+// the front-end form can render one checkbox per upstream. Only names and the
+// "default" flag are exposed — never the upstream URLs (which embed tokens).
+func handleUpstreamList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	upstreams, err := loadUpstreams()
+	if err != nil {
+		log.Printf("Failed to load upstreams for list: %v\n", err)
+		http.Error(w, "failed to load upstreams", http.StatusInternalServerError)
+		return
+	}
+
+	type upstreamOption struct {
+		Label   string `json:"label"`   // human-readable name shown in the form
+		Value   string `json:"value"`   // tag sent as ?upstream=<value>
+		Default bool   `json:"default"` // part of the implicit "default" selection
+	}
+
+	keys := make([]string, 0, len(upstreams))
+	for k := range upstreams {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	options := make([]upstreamOption, 0, len(keys))
+	for _, key := range keys {
+		spec := upstreams[key]
+		if !spec.enabled() {
+			continue
+		}
+		// The value must be a tag that selectedUpstreams matches on: prefer the
+		// name, then an explicit tag, then the map key.
+		value := spec.Name
+		if value == "" {
+			if len(spec.Tags) > 0 {
+				value = spec.Tags[0]
+			} else {
+				value = key
+			}
+		}
+		label := spec.Name
+		if label == "" {
+			label = key
+		}
+		isDefault := false
+		for _, t := range spec.tags() {
+			if t == "default" {
+				isDefault = true
+				break
+			}
+		}
+		options = append(options, upstreamOption{Label: label, Value: value, Default: isDefault})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(options); err != nil {
+		log.Printf("Failed to encode upstream list: %v\n", err)
+	}
+}
+
 func handleFileOp(w http.ResponseWriter, r *http.Request) {
 	// Fail closed: if no TOKEN is configured, the read/write endpoints are
 	// disabled entirely rather than open to everyone (an empty token must never
@@ -443,6 +509,7 @@ func main() {
 	mux.HandleFunc("/clash/config.yaml", handleConfig)
 	mux.HandleFunc("/upstreams.yaml", handleFileOp)
 	mux.HandleFunc("/template.yaml", handleFileOp)
+	mux.HandleFunc("/upstreams-list", handleUpstreamList)
 	mux.HandleFunc("/rule-providers", handleRuleProviders)
 	mux.Handle("/convert", makeProxy())
 

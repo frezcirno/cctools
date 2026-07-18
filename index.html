@@ -181,6 +181,38 @@
       background-color: #ccc;
     }
 
+    .preset-bar {
+      max-width: 850px;
+      margin: 0 auto 25px;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .preset-label {
+      font-weight: 500;
+      color: var(--label-color);
+      margin-right: 5px;
+    }
+
+    .preset-btn {
+      padding: 8px 18px;
+      background-color: var(--form-background);
+      color: var(--primary-color);
+      border: 1px solid var(--primary-color);
+      font-size: 0.95rem;
+    }
+
+    .preset-btn:hover {
+      background-color: var(--highlight-color);
+    }
+
+    .preset-btn.active {
+      background-color: var(--primary-color);
+      color: white;
+    }
+
     .hidden {
       display: none;
     }
@@ -248,12 +280,27 @@
   <main>
     <h1>Configure Your Proxy</h1>
 
+    <div class="preset-bar">
+      <span class="preset-label">Preset:</span>
+      <button type="button" class="preset-btn" data-preset="windows" onclick="applyPreset('windows')">Windows</button>
+      <button type="button" class="preset-btn" data-preset="linux" onclick="applyPreset('linux')">Linux</button>
+      <button type="button" class="preset-btn" data-preset="macos" onclick="applyPreset('macos')">macOS</button>
+      <button type="button" class="preset-btn" data-preset="android" onclick="applyPreset('android')">Android</button>
+      <button type="button" class="preset-btn" data-preset="ipad" onclick="applyPreset('ipad')">iPad</button>
+    </div>
+
     <form action="#" method="GET" onsubmit="handleSubmit(event)">
       <fieldset>
         <legend class="fieldset-legend">Proxy Node Configuration</legend>
         <div class="fieldset-content expanded" id="content-proxy-node">
           <div>
-            <div class="form-item">
+            <div class="form-item" id="form-upstream-checkboxes" style="display: none;">
+              <label class="item-label">Upstreams</label>
+              <div class="item-content checkbox-group" id="upstream-checkboxes"></div>
+            </div>
+
+            <!-- Fallback: shown only if /upstreams-list can't be loaded. -->
+            <div class="form-item" id="form-upstream-text">
               <label class="item-label" for="upstream">Upstreams</label>
               <input class="item-content" type="text" id="upstream" name="upstream" placeholder="default">
             </div>
@@ -641,6 +688,14 @@ https://101.101.101.101/dns-query
         }
       }
 
+      // merge upstream checkboxes into a single CSV `upstream` param. The
+      // checkboxes carry no `name`, so they are gathered here rather than from
+      // FormData. When none are checked the param is omitted → backend default.
+      const upstreamChecks = Array.from(document.querySelectorAll('.upstream-check:checked')).map(c => c.value);
+      if (upstreamChecks.length) {
+        data.upstream = upstreamChecks.join(',');
+      }
+
       // merge organizer-* into organizer
       data.organizer = Object.keys(data).filter(key => key.startsWith('organizer-')).map(key => key.split('-')[1]).join(',');
       delete data['organizer-cn'];
@@ -701,6 +756,100 @@ https://101.101.101.101/dns-query
       const secretInput = document.getElementById('external_controller_secret');
       if (secretInput) {
         secretInput.value = generateRandomPassword(16);
+      }
+    }
+
+    // Per-platform presets. Each key toggles the platform-dependent controls;
+    // fields not listed here keep their current value. Edit freely.
+    const PRESETS = {
+      windows: { port_proxy: true, tproxy: false, dns: true, tun: true, tun_stack: 'gvisor' },
+      linux: { port_proxy: true, tproxy: true, dns: true, tun: true, tun_stack: 'system' },
+      macos: { port_proxy: true, tproxy: false, dns: true, tun: true, tun_stack: 'system' },
+      android: { port_proxy: false, tproxy: false, dns: true, tun: true, tun_stack: 'gvisor' },
+      ipad: { port_proxy: false, tproxy: false, dns: true, tun: true, tun_stack: 'gvisor' },
+    };
+
+    function applyPreset(name) {
+      const preset = PRESETS[name];
+      if (!preset) {
+        return;
+      }
+      // Fieldset toggle checkboxes: set state and expand/collapse to match.
+      ['port_proxy', 'tproxy', 'dns', 'tun'].forEach(id => {
+        if (id in preset) {
+          const cb = document.getElementById(id);
+          cb.checked = preset[id];
+          toggleFieldset(id);
+        }
+      });
+      // TUN stack radio.
+      if (preset.tun_stack) {
+        const radio = document.getElementById('tun_stack-' + preset.tun_stack);
+        if (radio) {
+          radio.checked = true;
+        }
+      }
+      // Highlight the active preset button.
+      document.querySelectorAll('.preset-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.preset === name);
+      });
+      // If a URL was already generated, refresh it with the new values.
+      const result = document.getElementById('result');
+      if (result && result.value) {
+        document.querySelector('form').requestSubmit();
+      }
+    }
+
+    // Load the selectable upstreams and render one checkbox each. Falls back to
+    // the plain text input if the endpoint is unavailable.
+    function buildUpstreamCheckbox(opt) {
+      const item = document.createElement('div');
+      item.className = 'checkbox-item';
+      const label = document.createElement('label');
+      label.className = 'selectable';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.className = 'upstream-check';
+      input.value = opt.value;
+      input.checked = !!opt.default;
+      label.appendChild(input);
+      label.appendChild(document.createTextNode(opt.label));
+      item.appendChild(label);
+      return item;
+    }
+
+    (function loadUpstreamList() {
+      fetch('/upstreams-list')
+        .then(resp => {
+          if (!resp.ok) {
+            throw new Error('HTTP ' + resp.status);
+          }
+          return resp.json();
+        })
+        .then(options => {
+          if (!Array.isArray(options) || options.length === 0) {
+            return; // keep the text-input fallback
+          }
+          const container = document.getElementById('upstream-checkboxes');
+          container.innerHTML = '';
+          options.forEach(opt => container.appendChild(buildUpstreamCheckbox(opt)));
+          // Switch from the text input to the checkboxes. Disabling the text
+          // input keeps it out of FormData so it can't override the checkboxes.
+          document.getElementById('upstream').disabled = true;
+          document.getElementById('form-upstream-text').style.display = 'none';
+          document.getElementById('form-upstream-checkboxes').style.display = '';
+        })
+        .catch(err => {
+          console.warn('Could not load upstream list; using text input.', err);
+        });
+    })();
+
+    // On load, highlight the preset matching the detected OS (darwin → macOS).
+    {
+      const detected = platform === 'darwin' ? 'macos' : platform;
+      const btn = document.querySelector(`.preset-btn[data-preset="${detected}"]`);
+      if (btn) {
+        btn.classList.add('active');
       }
     }
 
