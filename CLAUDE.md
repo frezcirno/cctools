@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-cctools is a Go HTTP server that aggregates Clash subscription "airports" from multiple upstreams, dedupes/merges proxies, and renders a customizable Clash YAML config from a template. A legacy Python/Flask version lives in `v1/`.
+cctools is a Go HTTP server that aggregates Clash subscription "airports" from multiple upstreams, dedupes/merges proxies, and renders a customizable Clash YAML config. The base config (mode, dns/tun internals, hosts, cors, the 21 rule-providers and 206 rules) is built entirely in Go — `defaultTemplate()` in `template.go` — not read from a file. A legacy Python/Flask version lives in `v1/`.
 
 ## Build, Run, Test
 
@@ -16,7 +16,7 @@ go test ./...                      # all tests
 go test -run TestCollectSelectors  # single test by regex
 ```
 
-`init()` in `main.go` tries to load `./upstreams.yaml` and `./template.yaml` at startup but only warns (does not panic) if they are missing — they can be supplied later via the token-gated upload endpoint. Use `upstreams-example.yaml` as the format reference.
+`init()` in `main.go` preloads only `./upstreams.yaml` at startup, warning (not panicking) if missing — it can be supplied later via the token-gated upload endpoint. Use `upstreams-example.yaml` as the format reference. The template is **not** loaded from disk by default: `loadTemplate()` returns `defaultTemplate()` (Go), and only falls back to reading `./template.yaml` if that file exists (an optional, gitignored override — e.g. one uploaded via the endpoint). To change the built-in rules/rule-providers/dns/tun defaults, edit `template.go`.
 
 Environment variables: `LISTEN_ADDR` (bind address), `TOKEN` (auth for `/upstreams.yaml` and `/template.yaml` GET/POST — **when unset, those endpoints are disabled, not open**), `DISABLE_CACHE` (skip both cache reads and writes).
 
@@ -55,6 +55,6 @@ Single-package Go module (`package main`, all files in repo root). No web framew
 - New query params must be added to `knownConfigQueryKeys` in `main.go`, otherwise `warnUnknownQueryParams` will log a warning every request.
 - The `tun` and `dns` template options are mutated only when their respective `tun=true`/`dns=true` query flags are set; otherwise the template's existing values pass through.
 - Platform detection (`Windows`/`Linux`/`Darwin`/`Android`/`Other`) is from the request `User-Agent` and currently affects only `tun.auto-redir` on Windows.
-- `upstreams.yaml` is gitignored (private). `cache/` is gitignored. `template.yaml` is committed and intentionally tracked.
+- `upstreams.yaml` is gitignored (private). `cache/` is gitignored. `template.yaml` is also gitignored — it no longer exists in the repo; the base config lives in `template.go` (`defaultTemplate`). A `template.yaml` on disk is only an optional per-deployment override.
 - `keep_upstream_selector`, `custom_rules`, and `tun_auto_route` are accepted by `knownConfigQueryKeys` (so the front-end form doesn't trigger warnings) but are **not implemented** by the backend — wiring them up (e.g. a line-based parser for `custom_rules`, since rule values contain commas) or removing the `index.html` controls is open work.
 - Deployment: the supported target is the standalone Go binary (`./cctools`). `vercel.json` and `v1/` are legacy Python (the Flask app) and currently non-functional (`vercel.json` builds a root `index.py` that does not exist); don't assume the Go server is wired to Vercel.

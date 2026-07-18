@@ -8,3 +8,4 @@ __pycache__/
 .marscode/
 cctools
 nohup.out
+template.yaml

@@ -25,7 +25,10 @@ import (
 var token = os.Getenv("TOKEN")
 
 func init() {
-	for _, fp := range []string{"./upstreams.yaml", "./template.yaml"} {
+	// Only upstreams.yaml is preloaded from disk. template.yaml is no longer
+	// required: the base config is built in Go (defaultTemplate, template.go);
+	// an on-disk template.yaml is an optional override loaded lazily.
+	for _, fp := range []string{"./upstreams.yaml"} {
 		src, err := os.ReadFile(fp)
 		if err != nil {
 			// Don't crash on boot: the file may be supplied later via the
@@ -89,13 +92,22 @@ func loadUpstreams() (tpl map[string]AirportSpec, err error) {
 	return
 }
 
-func loadTemplate() (tpl map[string]any, err error) {
-	template_yaml, err := fsLoad("./template.yaml")
-	if err != nil {
-		return nil, fmt.Errorf("failed to load template.yaml: %w", err)
+func loadTemplate() (map[string]any, error) {
+	// The built-in defaultTemplate() (template.go) is the source of truth for
+	// the base config. A template.yaml on disk — e.g. uploaded via the
+	// token-gated endpoint — overrides it when present, for ad-hoc tweaks.
+	if _, err := fsStat("./template.yaml"); err == nil {
+		template_yaml, err := fsLoad("./template.yaml")
+		if err != nil {
+			return nil, fmt.Errorf("failed to load template.yaml: %w", err)
+		}
+		var tpl map[string]any
+		if err := yaml.Unmarshal(template_yaml, &tpl); err != nil {
+			return nil, fmt.Errorf("failed to parse template.yaml: %w", err)
+		}
+		return tpl, nil
 	}
-	err = yaml.Unmarshal(template_yaml, &tpl)
-	return
+	return defaultTemplate(), nil
 }
 
 func getString(query url.Values, key string) string {
@@ -343,6 +355,10 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 
 	if len(query) == 0 {
+		// The form is edited in-repo and served straight from disk; tell the
+		// browser to always revalidate so UI changes are never masked by a
+		// stale cached copy.
+		w.Header().Set("Cache-Control", "no-cache")
 		http.ServeFile(w, r, "index.html")
 		return
 	}
@@ -458,6 +474,16 @@ func handleFileOp(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		target_file, err := fsLoad(path)
 		if err != nil {
+			// No on-disk override: for template.yaml, fall back to the built-in
+			// default (template.go) so callers can still inspect/download the
+			// effective base config instead of getting a 404.
+			if path == "template.yaml" {
+				if out, mErr := yaml.Marshal(defaultTemplate()); mErr == nil {
+					w.Header().Set("Content-Type", "application/x-yaml")
+					w.Write(out)
+					return
+				}
+			}
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
