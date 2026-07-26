@@ -47,7 +47,7 @@ func TestCollectSelectorsIncludesCustomChainsInOrder(t *testing.T) {
 	}
 
 	got := cfg.collectSelectors()
-	want := []string{"PROXY", "CHATBOT", "ONEDRIVE", "STREAMING", "COMPLEX", "UDP", "FALLBACK", "CNSITE"}
+	want := []string{"PROXY", "CHATBOT", "ONEDRIVE", "STREAMING", "COMPLEX", "UDP", "UNKNOWN", "CNSITE"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("collectSelectors() = %v, want %v", got, want)
 	}
@@ -59,7 +59,7 @@ func TestExtractRuleTargetSupportsMultipleClashRuleForms(t *testing.T) {
 		want string
 		ok   bool
 	}{
-		{rule: "MATCH,FALLBACK", want: "FALLBACK", ok: true},
+		{rule: "MATCH,FALLBACK", want: "UNKNOWN", ok: true},
 		{rule: "DOMAIN-SUFFIX,google.com,PROXY", want: "PROXY", ok: true},
 		{rule: "IP-CIDR,1.1.1.0/24,CHATBOT,no-resolve", want: "CHATBOT", ok: true},
 		{rule: "RULE-SET,openai,CHATBOT", want: "CHATBOT", ok: true},
@@ -256,7 +256,7 @@ func makeDictList(entries ...YamlStrDict) DictList {
 	dl := NewEmptyDictList()
 	for _, entry := range entries {
 		name := entry["name"].(string)
-		dl.set(name, entry)
+		dl.Set(name, entry)
 	}
 	return dl
 }
@@ -278,7 +278,7 @@ func TestClassifyProxiesUsesClassifierRegistry(t *testing.T) {
 	if !reflect.DeepEqual(classified["tw"], []string{"台湾节点"}) {
 		t.Fatalf("classified tw = %v", classified["tw"])
 	}
-	if !isHK(proxies.get("香港节点")) || isHK(proxies.get("台湾节点")) {
+	if !isHK(proxies.Get("香港节点")) || isHK(proxies.Get("台湾节点")) {
 		t.Fatalf("isHK() matcher is incorrect")
 	}
 	if !reflect.DeepEqual(classified["us"], []string{"us-node"}) {

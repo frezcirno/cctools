@@ -7,12 +7,12 @@ import (
 
 func TestDictListPreservesInsertionOrder(t *testing.T) {
 	dl := NewEmptyDictList()
-	dl.set("c", YamlStrDict{"name": "c"})
-	dl.set("a", YamlStrDict{"name": "a"})
-	dl.set("b", YamlStrDict{"name": "b"})
+	dl.Set("c", YamlStrDict{"name": "c"})
+	dl.Set("a", YamlStrDict{"name": "a"})
+	dl.Set("b", YamlStrDict{"name": "b"})
 
 	want := []string{"c", "a", "b"}
-	got := dl.keys()
+	got := dl.Keys()
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("keys() = %v, want %v", got, want)
 	}
@@ -20,10 +20,10 @@ func TestDictListPreservesInsertionOrder(t *testing.T) {
 
 func TestDictListValuesInOrder(t *testing.T) {
 	dl := NewEmptyDictList()
-	dl.set("x", YamlStrDict{"name": "x", "val": 1})
-	dl.set("y", YamlStrDict{"name": "y", "val": 2})
+	dl.Set("x", YamlStrDict{"name": "x", "val": 1})
+	dl.Set("y", YamlStrDict{"name": "y", "val": 2})
 
-	vals := dl.values()
+	vals := dl.Values()
 	if len(vals) != 2 {
 		t.Fatalf("values() len = %d, want 2", len(vals))
 	}
@@ -34,56 +34,56 @@ func TestDictListValuesInOrder(t *testing.T) {
 
 func TestDictListSetOverwriteDoesNotDuplicate(t *testing.T) {
 	dl := NewEmptyDictList()
-	dl.set("a", YamlStrDict{"name": "a", "v": 1})
-	dl.set("b", YamlStrDict{"name": "b", "v": 2})
-	dl.set("a", YamlStrDict{"name": "a", "v": 3})
+	dl.Set("a", YamlStrDict{"name": "a", "v": 1})
+	dl.Set("b", YamlStrDict{"name": "b", "v": 2})
+	dl.Set("a", YamlStrDict{"name": "a", "v": 3})
 
 	if dl.Len() != 2 {
 		t.Fatalf("Len() = %d, want 2", dl.Len())
 	}
-	keys := dl.keys()
+	keys := dl.Keys()
 	want := []string{"a", "b"}
 	if !reflect.DeepEqual(keys, want) {
 		t.Fatalf("keys() = %v, want %v", keys, want)
 	}
-	if dl.get("a")["v"] != 3 {
-		t.Fatalf("get(a).v = %v, want 3", dl.get("a")["v"])
+	if dl.Get("a")["v"] != 3 {
+		t.Fatalf("get(a).v = %v, want 3", dl.Get("a")["v"])
 	}
 }
 
 func TestDictListDel(t *testing.T) {
 	dl := NewEmptyDictList()
-	dl.set("a", YamlStrDict{"name": "a"})
-	dl.set("b", YamlStrDict{"name": "b"})
-	dl.set("c", YamlStrDict{"name": "c"})
+	dl.Set("a", YamlStrDict{"name": "a"})
+	dl.Set("b", YamlStrDict{"name": "b"})
+	dl.Set("c", YamlStrDict{"name": "c"})
 
-	dl.del("b")
+	dl.Del("b")
 
 	if dl.Len() != 2 {
 		t.Fatalf("Len() = %d, want 2", dl.Len())
 	}
 	want := []string{"a", "c"}
-	got := dl.keys()
+	got := dl.Keys()
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("keys() = %v, want %v", got, want)
 	}
-	if dl.get("b") != nil {
+	if dl.Get("b") != nil {
 		t.Fatal("get(b) should return nil after delete")
 	}
 }
 
 func TestDictListUpdate(t *testing.T) {
 	dl1 := NewEmptyDictList()
-	dl1.set("a", YamlStrDict{"name": "a"})
+	dl1.Set("a", YamlStrDict{"name": "a"})
 
 	dl2 := NewEmptyDictList()
-	dl2.set("b", YamlStrDict{"name": "b"})
-	dl2.set("c", YamlStrDict{"name": "c"})
+	dl2.Set("b", YamlStrDict{"name": "b"})
+	dl2.Set("c", YamlStrDict{"name": "c"})
 
-	dl1.update(dl2)
+	dl1.Update(dl2)
 
 	want := []string{"a", "b", "c"}
-	got := dl1.keys()
+	got := dl1.Keys()
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("keys() = %v, want %v", got, want)
 	}
@@ -91,7 +91,7 @@ func TestDictListUpdate(t *testing.T) {
 
 func TestDictListGetMissing(t *testing.T) {
 	dl := NewEmptyDictList()
-	if dl.get("nonexistent") != nil {
+	if dl.Get("nonexistent") != nil {
 		t.Fatal("get should return nil for missing key")
 	}
 }
@@ -107,18 +107,18 @@ func TestNewDictListRejectsMalformedInput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("valid input errored: %v", err)
 	}
-	if dl.Len() != 1 || dl.get("ok") == nil {
+	if dl.Len() != 1 || dl.Get("ok") == nil {
 		t.Fatalf("valid input not stored: len=%d", dl.Len())
 	}
 }
 
 func TestDictListEach(t *testing.T) {
 	dl := NewEmptyDictList()
-	dl.set("x", YamlStrDict{"name": "x"})
-	dl.set("y", YamlStrDict{"name": "y"})
+	dl.Set("x", YamlStrDict{"name": "x"})
+	dl.Set("y", YamlStrDict{"name": "y"})
 
 	var visited []string
-	dl.each(func(key string, _ YamlStrDict) {
+	dl.ForEach(func(key string, _ YamlStrDict) {
 		visited = append(visited, key)
 	})
 

@@ -25,7 +25,7 @@ func NewDictList(in []any) (DictList, error) {
 		if err != nil {
 			return DictList{}, err
 		}
-		dl.set(name, YamlStrDict(value))
+		dl.Set(name, YamlStrDict(value))
 	}
 	return dl, nil
 }
@@ -34,14 +34,14 @@ func NewEmptyDictList() DictList {
 	return DictList{items: map[string]YamlStrDict{}}
 }
 
-func (dl *DictList) get(key string) YamlStrDict {
+func (dl *DictList) Get(key string) YamlStrDict {
 	if v, ok := dl.items[key]; ok {
 		return v
 	}
 	return nil
 }
 
-func (dl *DictList) set(key string, value YamlStrDict) {
+func (dl *DictList) Set(key string, value YamlStrDict) {
 	if value != nil {
 		value["name"] = key
 	}
@@ -51,7 +51,7 @@ func (dl *DictList) set(key string, value YamlStrDict) {
 	dl.items[key] = value
 }
 
-func (dl *DictList) del(key string) {
+func (dl *DictList) Del(key string) {
 	if _, ok := dl.items[key]; !ok {
 		return
 	}
@@ -64,19 +64,19 @@ func (dl *DictList) del(key string) {
 	}
 }
 
-func (dl *DictList) update(rhs DictList) {
+func (dl *DictList) Update(rhs DictList) {
 	for _, k := range rhs.order {
-		dl.set(k, rhs.items[k])
+		dl.Set(k, rhs.items[k])
 	}
 }
 
-func (dl *DictList) keys() []string {
+func (dl *DictList) Keys() []string {
 	res := make([]string, len(dl.order))
 	copy(res, dl.order)
 	return res
 }
 
-func (dl *DictList) values() []YamlStrDict {
+func (dl *DictList) Values() []YamlStrDict {
 	res := make([]YamlStrDict, 0, len(dl.order))
 	for _, k := range dl.order {
 		res = append(res, dl.items[k])
@@ -88,8 +88,8 @@ func (dl *DictList) Len() int {
 	return len(dl.order)
 }
 
-// each iterates over the DictList in insertion order.
-func (dl *DictList) each(fn func(key string, value YamlStrDict)) {
+// ForEach iterates over the DictList in insertion order.
+func (dl *DictList) ForEach(fn func(key string, value YamlStrDict)) {
 	for _, k := range dl.order {
 		fn(k, dl.items[k])
 	}

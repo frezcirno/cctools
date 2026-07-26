@@ -208,7 +208,7 @@ func (c *Config) Generate(base BaseURL) (YamlStrDict, error) {
 		// unproxied. Returning an error lets the client keep its last-known-good.
 		return nil, &UpstreamUnavailableError{fmt.Errorf("no proxies collected from any configured upstream")}
 	}
-	cfg.Template["proxies"] = allProxies.values()
+	cfg.Template["proxies"] = allProxies.Values()
 	cfg.Template["proxy-groups"] = cfg.buildProxyGroups(airports, allProxies, allSelectors)
 
 	if err := cfg.transformRuleProviders(base); err != nil {
@@ -221,11 +221,11 @@ func (c *Config) Generate(base BaseURL) (YamlStrDict, error) {
 func (c *Config) collectSelectors() []string {
 	tplRulesRaw, ok := c.Template["rules"]
 	if !ok {
-		return []string{"PROXY", "UDP", "FALLBACK", "CNSITE"}
+		return []string{"PROXY", "UDP", "UNKNOWN", "CNSITE"}
 	}
 	ruleItems, err := asAnyList(tplRulesRaw, "rules")
 	if err != nil {
-		return []string{"PROXY", "UDP", "FALLBACK", "CNSITE"}
+		return []string{"PROXY", "UDP", "UNKNOWN", "CNSITE"}
 	}
 
 	presetChains := map[string]struct{}{
@@ -235,7 +235,7 @@ func (c *Config) collectSelectors() []string {
 		"PASS-RULE": {},
 		"PROXY":     {},
 		"UDP":       {},
-		"FALLBACK":  {},
+		"UNKNOWN":   {},
 		"CNSITE":    {},
 	}
 	customSelectors := []string{}
@@ -255,7 +255,7 @@ func (c *Config) collectSelectors() []string {
 		customSelectors = append(customSelectors, chain)
 	}
 
-	return append(append([]string{"PROXY"}, customSelectors...), "UDP", "FALLBACK", "CNSITE")
+	return append(append([]string{"PROXY"}, customSelectors...), "UDP", "UNKNOWN", "CNSITE")
 }
 
 func extractRuleTarget(rule string) (string, bool) {
@@ -506,7 +506,7 @@ func (c *Config) fetchAirports() map[string]*Airport {
 func collectAllProxies(airports map[string]*Airport) DictList {
 	allProxies := NewEmptyDictList()
 	for _, name := range sortedAirportKeys(airports) {
-		allProxies.update(airports[name].Proxies)
+		allProxies.Update(airports[name].Proxies)
 	}
 	return allProxies
 }
@@ -517,7 +517,7 @@ func (c *Config) buildProxyGroups(airports map[string]*Airport, allProxies DictL
 	groupKey := "all"
 
 	if allProxies.Len() > 0 {
-		instanceURLTestGroups = append(instanceURLTestGroups, makeURLTestGroup(groupKey, allProxies.keys()))
+		instanceURLTestGroups = append(instanceURLTestGroups, makeURLTestGroup(groupKey, allProxies.Keys()))
 	}
 
 	instanceURLTestGroups = append(instanceURLTestGroups, c.buildOrganizerGroups(groupKey, allProxies)...)
@@ -525,7 +525,7 @@ func (c *Config) buildProxyGroups(airports map[string]*Airport, allProxies DictL
 	for _, name := range sortedAirportKeys(airports) {
 		airportProxies := airports[name].Proxies
 		if airportProxies.Len() > 0 {
-			airportProxyKeys := airportProxies.keys()
+			airportProxyKeys := airportProxies.Keys()
 			sort.Strings(airportProxyKeys)
 			instanceURLTestGroups = append(instanceURLTestGroups, makeURLTestGroup(name, airportProxyKeys))
 		}
@@ -604,7 +604,7 @@ func classifyProxies(proxies DictList, classifiers []struct {
 	for _, classifier := range classifiers {
 		classified[classifier.name] = []string{}
 	}
-	proxies.each(func(_ string, proxy YamlStrDict) {
+	proxies.ForEach(func(_ string, proxy YamlStrDict) {
 		name, err := asString(proxy["name"], "proxy.name")
 		if err != nil {
 			return
@@ -622,7 +622,7 @@ func selectorProxies(selector string, groupKeys []string) []string {
 	switch selector {
 	case "PROXY":
 		return append(groupKeys, "DIRECT")
-	case "FALLBACK":
+	case "UNKNOWN":
 		return []string{"PROXY", "DIRECT"}
 	case "CNSITE":
 		return []string{"DIRECT", "PROXY"}

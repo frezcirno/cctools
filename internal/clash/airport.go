@@ -37,28 +37,28 @@ type Airport struct {
 }
 
 func (airport *Airport) renameProxy(key string, newKey string) error {
-	if airport.Proxies.get(newKey) != nil {
+	if airport.Proxies.Get(newKey) != nil {
 		return fmt.Errorf("proxy %s already exists", newKey)
 	}
 
-	proxy := airport.Proxies.get(key)
+	proxy := airport.Proxies.Get(key)
 	if proxy == nil {
 		return fmt.Errorf("proxy %s not found", key)
 	}
 
-	airport.Proxies.del(key)
-	airport.Proxies.set(newKey, proxy)
+	airport.Proxies.Del(key)
+	airport.Proxies.Set(newKey, proxy)
 	return nil
 }
 
 func (airport *Airport) removeProxy(key string) {
-	airport.Proxies.del(key)
+	airport.Proxies.Del(key)
 }
 
 // filterProxy drops every proxy for which keep returns false.
 func (airport *Airport) filterProxy(keep func(YamlStrDict) bool) {
 	toRemove := []string{}
-	airport.Proxies.each(func(key string, proxy YamlStrDict) {
+	airport.Proxies.ForEach(func(key string, proxy YamlStrDict) {
 		if !keep(proxy) {
 			toRemove = append(toRemove, key)
 		}
@@ -69,17 +69,17 @@ func (airport *Airport) filterProxy(keep func(YamlStrDict) bool) {
 }
 
 func mergeProxies(from, to *Airport) {
-	for _, key := range from.Proxies.keys() {
+	for _, key := range from.Proxies.Keys() {
 		old_key := key
 		// Deterministic suffix (old_2, old_3, ...) so identical inputs always
 		// produce identical names — a random suffix would make output unstable.
-		for i := 2; to.Proxies.get(key) != nil; i++ {
+		for i := 2; to.Proxies.Get(key) != nil; i++ {
 			key = fmt.Sprintf("%s_%d", old_key, i)
 		}
 		if old_key != key {
 			from.renameProxy(old_key, key)
 		}
-		to.Proxies.set(key, from.Proxies.get(key))
+		to.Proxies.Set(key, from.Proxies.Get(key))
 	}
 }
 
