@@ -23,10 +23,7 @@ func TestProxyNameMissing(t *testing.T) {
 		t.Fatal("isJP should return false for proxy without name")
 	}
 	if claudeOk(proxy) {
-		t.Fatal("isClaude should return false for proxy without name")
-	}
-	if chatgptOk(proxy) {
-		t.Fatal("isChatgpt should return false for proxy without name")
+		t.Fatal("claudeOk should return false for proxy without name")
 	}
 	if isOversea(proxy) {
 		// isOversea is !isCN, and isCN returns false, so isOversea returns true
@@ -44,48 +41,60 @@ func TestProxyNameWrongType(t *testing.T) {
 	}
 }
 
-func TestIsClaude(t *testing.T) {
+// organizerMatcher looks the predicate up through DefaultNodeOrganizers rather
+// than calling it directly, so a renamed or rewired entry fails here instead of
+// silently dropping the group from every generated config.
+func organizerMatcher(t *testing.T, name string) func(YamlStrDict) bool {
+	t.Helper()
+	for _, organizer := range DefaultNodeOrganizers {
+		if organizer.name == name {
+			return organizer.matcher
+		}
+	}
+	t.Fatalf("organizer %q not registered in DefaultNodeOrganizers", name)
+	return nil
+}
+
+// The claude group takes any US node, plus nodes advertising AI unlocking.
+func TestClaudeOrganizerTakesUSAndAINodes(t *testing.T) {
+	matcher := organizerMatcher(t, "claude")
+
 	match := []string{
-		"US-Claude-01", "claude专线", "🇺🇸 Anthropic 解锁", "美国克劳德",
-		"JP|Claude/GPT",
+		"US-01", "US-Claude-01", "🇺🇸 Anthropic 解锁", "美国克劳德",
+		"JP|Claude/GPT", "美国AI解锁", "OpenAI|SG",
 	}
 	for _, name := range match {
-		if !claudeOk(YamlStrDict{"name": name}) {
-			t.Errorf("isClaude(%q) = false, want true", name)
+		if !matcher(YamlStrDict{"name": name}) {
+			t.Errorf("claude matcher(%q) = false, want true", name)
 		}
 	}
 
-	// "clauded"/"anthropics" have no word boundary; the geo nodes must not leak
-	// into the claude group.
-	noMatch := []string{"US-01", "香港 IEPL", "claudex", "unclaude", "GPT-4 解锁"}
+	// Bare "ai" inside a larger word must not match, or Dubai/Shanghai nodes
+	// would leak in.
+	noMatch := []string{"香港 IEPL", "JP-Tokyo-01", "Dubai-01", "Shanghai IPLC"}
 	for _, name := range noMatch {
-		if claudeOk(YamlStrDict{"name": name}) {
-			t.Errorf("isClaude(%q) = true, want false", name)
+		if matcher(YamlStrDict{"name": name}) {
+			t.Errorf("claude matcher(%q) = true, want false", name)
 		}
 	}
 }
 
-func TestIsChatgpt(t *testing.T) {
-	match := []string{
-		"美国AI解锁", "US-ChatGPT", "chat gpt 专线", "OpenAI|SG",
-		"🇯🇵 GPT", "人工智能专线", "ChatBot-01",
-	}
+// The chatgpt group selects on geography — anything outside CN/HK/TW — rather
+// than on an advertised AI-unlock label.
+func TestChatgptOrganizerTakesOverseaNodes(t *testing.T) {
+	matcher := organizerMatcher(t, "chatgpt")
+
+	match := []string{"JP-Tokyo-01", "US-01", "SG 新加坡", "美国AI解锁", "Dubai-01"}
 	for _, name := range match {
-		if !chatgptOk(YamlStrDict{"name": name}) {
-			t.Errorf("isChatgpt(%q) = false, want true", name)
+		if !matcher(YamlStrDict{"name": name}) {
+			t.Errorf("chatgpt matcher(%q) = false, want true", name)
 		}
 	}
 
-	// Bare "ai" inside a larger word must not match, or Dubai/Thailand/Shanghai
-	// nodes would all land in the chatgpt group. Other vendors (Gemini, Copilot)
-	// are deliberately out of scope now that the group is named chatgpt.
-	noMatch := []string{
-		"Dubai-01", "Thailand 泰国", "Shanghai IPLC", "US-Claude-01",
-		"Gemini-JP", "Copilot-US",
-	}
+	noMatch := []string{"香港 IEPL", "🇭🇰 HK-01", "台湾 TW-02", "hong kong 02"}
 	for _, name := range noMatch {
-		if chatgptOk(YamlStrDict{"name": name}) {
-			t.Errorf("isChatgpt(%q) = true, want false", name)
+		if matcher(YamlStrDict{"name": name}) {
+			t.Errorf("chatgpt matcher(%q) = true, want false", name)
 		}
 	}
 }

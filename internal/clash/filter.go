@@ -28,7 +28,7 @@ var DefaultNodeOrganizers = []NodeOrganizer{
 	{name: "jp", matcher: isJP},
 	{name: "oversea", matcher: isOversea},
 	{name: "claude", matcher: claudeOk},
-	{name: "chatbot", matcher: isOversea},
+	{name: "chatgpt", matcher: isOversea},
 	{name: "udp", matcher: supportUDP},
 }
 
@@ -92,7 +92,7 @@ func isJP(proxy YamlStrDict) bool {
 
 func claudeOk(proxy YamlStrDict) bool {
 	name, ok := proxyName(proxy)
-	return ok && (US.MatchString(name) || CHATGPT.MatchString(name))
+	return ok && (US.MatchString(name) || CLAUDE.MatchString(name))
 }
 
 func supportUDP(proxy YamlStrDict) bool {
