@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -445,5 +447,95 @@ func TestBuildOrganizerGroupsOnlyEmitsRequestedGroups(t *testing.T) {
 	wantNames := []string{"all-tw", "all-us", "all-udp"}
 	if !reflect.DeepEqual(gotNames, wantNames) {
 		t.Fatalf("group names = %v, want %v", gotNames, wantNames)
+	}
+}
+
+// groupNames returns the names of the built proxy-groups, in output order.
+func groupNames(groups []YamlStrDict) []string {
+	names := make([]string, 0, len(groups))
+	for _, g := range groups {
+		names = append(names, g["name"].(string))
+	}
+	return names
+}
+
+func hasPrefixIn(names []string, prefix string) bool {
+	for _, n := range names {
+		if n == prefix || strings.HasPrefix(n, prefix+"-") {
+			return true
+		}
+	}
+	return false
+}
+
+// With one airport the "all" scope duplicates that airport's groups node for
+// node, so it is dropped: keeping it would health-check every proxy twice.
+func TestBuildProxyGroupsSkipsAllScopeForSingleAirport(t *testing.T) {
+	proxies := makeDictList(
+		YamlStrDict{"name": "US-01", "udp": true},
+		YamlStrDict{"name": "JP-01"},
+	)
+	cfg := Config{Organizer: []string{"us", "udp"}}
+	airports := map[string]*Airport{"solo": {Proxies: proxies}}
+
+	names := groupNames(cfg.buildProxyGroups(airports, proxies, []string{"PROXY"}))
+
+	if hasPrefixIn(names, "all") {
+		t.Fatalf("single airport should not emit an \"all\" scope, got %v", names)
+	}
+	for _, want := range []string{"solo", "solo-us", "solo-udp"} {
+		if !slices.Contains(names, want) {
+			t.Fatalf("missing group %q in %v", want, names)
+		}
+	}
+}
+
+// With more than one airport the "all" scope is what merges them, so it stays.
+func TestBuildProxyGroupsKeepsAllScopeForMultipleAirports(t *testing.T) {
+	a := makeDictList(YamlStrDict{"name": "US-01"})
+	b := makeDictList(YamlStrDict{"name": "JP-01"})
+	merged := makeDictList(YamlStrDict{"name": "US-01"}, YamlStrDict{"name": "JP-01"})
+	cfg := Config{Organizer: []string{"us"}}
+	airports := map[string]*Airport{"one": {Proxies: a}, "two": {Proxies: b}}
+
+	names := groupNames(cfg.buildProxyGroups(airports, merged, []string{"PROXY"}))
+
+	for _, want := range []string{"all", "all-us", "one", "two"} {
+		if !slices.Contains(names, want) {
+			t.Fatalf("missing group %q in %v", want, names)
+		}
+	}
+}
+
+// Every override probes a Cloudflare-fronted service, where a geo-blocked node
+// still answers (claude.ai replies 403 with a challenge page). Without an
+// expected status mihomo counts that as alive and the probe silently decays
+// into a costly generate_204, so the pairing is mandatory.
+func TestHealthCheckOverridesPinAnExpectedStatus(t *testing.T) {
+	for _, override := range healthCheckOverrides {
+		if override.expectedStatus == "" {
+			t.Errorf("override %q (%s) has no expectedStatus, so a blocked node would still rank as alive",
+				override.suffix, override.url)
+		}
+	}
+}
+
+// The default probe returns 204, so it must not carry an expected status, while
+// an overridden group must.
+func TestMakeURLTestGroupEmitsExpectedStatusOnlyWhenOverridden(t *testing.T) {
+	plain := makeURLTestGroup("paoluz-us", []string{"n1"})
+	if _, ok := plain["expected-status"]; ok {
+		t.Errorf("default group should not pin a status, got %v", plain["expected-status"])
+	}
+	if plain["url"] != defaultURLTestURL {
+		t.Errorf("default group url = %v, want %v", plain["url"], defaultURLTestURL)
+	}
+
+	claude := makeURLTestGroup("paoluz-claude", []string{"n1"})
+	if claude["expected-status"] != "200" {
+		t.Errorf("claude group expected-status = %v, want 200", claude["expected-status"])
+	}
+	if !strings.Contains(claude["url"].(string), "claude.ai") {
+		t.Errorf("claude group should probe claude.ai, got %v", claude["url"])
 	}
 }

@@ -531,6 +531,8 @@ func collectAllProxies(airports map[string]*Airport) DictList {
 //     and auto-selects the lowest-latency one. Named `<scope>` or
 //     `<scope>-<organizer>`, where scope is either "all" (every upstream merged)
 //     or a single airport name: all, all-us, all-udp, glados, glados-us, …
+//     The "all" scope is omitted when there is only one airport, since it would
+//     duplicate that airport's groups node-for-node.
 //   - select groups — the top-level chains rules dispatch to (PROXY, CLAUDE,
 //     CNSITE, …). These hold no proxies of their own; their members are the
 //     url-test group names above, so the user picks a *policy* ("route Claude
@@ -544,14 +546,21 @@ func (c *Config) buildProxyGroups(airports map[string]*Airport, allProxies DictL
 	groupKey := "all"
 
 	// The cross-airport groups: every proxy merged, then one subgroup per
-	// organizer the request asked for. Generate already rejects a zero-proxy
-	// result, so the guard is belt-and-braces against an empty url-test group,
-	// which Clash rejects as invalid.
-	if allProxies.Len() > 0 {
-		instanceURLTestGroups = append(instanceURLTestGroups, makeURLTestGroup(groupKey, allProxies.Keys()))
-	}
+	// organizer the request asked for.
+	//
+	// Skipped when there is only one airport, because then "all" holds exactly
+	// the same proxies as that airport's own groups — the config would carry two
+	// names for one set and health-check every node twice for nothing.
+	if len(airports) > 1 {
+		// Generate already rejects a zero-proxy result, so this guard is
+		// belt-and-braces against an empty url-test group, which Clash rejects
+		// as invalid.
+		if allProxies.Len() > 0 {
+			instanceURLTestGroups = append(instanceURLTestGroups, makeURLTestGroup(groupKey, allProxies.Keys()))
+		}
 
-	instanceURLTestGroups = append(instanceURLTestGroups, c.buildOrganizerGroups(groupKey, allProxies)...)
+		instanceURLTestGroups = append(instanceURLTestGroups, c.buildOrganizerGroups(groupKey, allProxies)...)
+	}
 
 	// Then the same shape again, scoped to each airport, so a user can pin a
 	// chain to one subscription. Airports are walked in sorted order and their
@@ -596,37 +605,55 @@ func (c *Config) buildProxyGroups(airports map[string]*Airport, allProxies DictL
 }
 
 const (
-	defaultURLTestURL       = "http://www.gstatic.com/generate_204"
-	defaultURLTestInterval  = 300
+	defaultURLTestURL = "http://www.gstatic.com/generate_204"
+	// defaultURLTestInterval is deliberately slack. Every proxy in every group
+	// is probed once per interval, so with a few hundred group memberships a
+	// 300s interval meant ~100k probes/day — by far the largest source of
+	// health-check traffic, dwarfing the per-group overrides below.
+	defaultURLTestInterval  = 600
 	defaultURLTestTolerance = 100
 )
 
-// healthCheckOverrides give an organizer subgroup a probe that actually
-// exercises what the group exists for — a "-claude" group that only pinged
-// generate_204 would tell you nothing the plain group doesn't. Matched by
-// suffix against the group name, first hit wins, so list specific before broad.
+// healthCheckOverrides point an organizer subgroup at the service it exists to
+// reach, so its ranking reflects "this node can actually use the service"
+// rather than "this node has a route out". Matched by suffix against the group
+// name, first hit wins, so list specific before broad.
+//
+// expectedStatus is what makes these worth their cost. All three hosts sit
+// behind Cloudflare, so a geo-blocked node still gets an HTTP reply — claude.ai
+// answers a blocked request with 403 and a 5 KB challenge page. Without an
+// expected status mihomo counts that as alive and the probe degrades into an
+// expensive generate_204; requiring 200 turns it into a real unlock test.
+//
+// Volume stays small because these groups are small: the claude group is a
+// handful of nodes at a 1800s interval, i.e. a couple of hundred requests a day
+// spread across the exit IPs. The traffic worth worrying about is the default
+// probe, which every proxy in every group runs at defaultURLTestInterval.
 var healthCheckOverrides = []struct {
-	suffix   string
-	url      string
-	interval int
+	suffix         string
+	url            string
+	interval       int
+	expectedStatus string
 }{
-	{"-claude", "https://claude.ai", 1800},
-	{"-chatbot", "https://chatgpt.com", 1800},
-	{"-tw", "https://ani.gamer.com.tw/", 1800},
+	{"-claude", "https://claude.ai", 1800, "200"},
+	{"-chatbot", "https://chatgpt.com", 1800, "200"},
+	{"-tw", "https://ani.gamer.com.tw", 1800, "200"},
 }
 
 func makeURLTestGroup(name string, proxies []string) YamlStrDict {
 	var url string = defaultURLTestURL
 	var interval int = defaultURLTestInterval
+	var expectedStatus string
 	lowered := strings.ToLower(name)
 	for _, override := range healthCheckOverrides {
 		if strings.HasSuffix(lowered, override.suffix) {
 			url = override.url
 			interval = override.interval
+			expectedStatus = override.expectedStatus
 			break
 		}
 	}
-	return YamlStrDict{
+	group := YamlStrDict{
 		"name":     name,
 		"type":     "url-test",
 		"proxies":  proxies,
@@ -635,6 +662,12 @@ func makeURLTestGroup(name string, proxies []string) YamlStrDict {
 		// 新节点延迟必须比当前节点低 tolerance 以上才会切换,防止在两个延迟相近的节点间反复横跳
 		"tolerance": defaultURLTestTolerance,
 	}
+	// Only emitted for overridden groups: the default generate_204 probe returns
+	// 204, so pinning a status there would mark every node dead.
+	if expectedStatus != "" {
+		group["expected-status"] = expectedStatus
+	}
+	return group
 }
 
 func (c *Config) buildOrganizerGroups(prefix string, proxies DictList) []YamlStrDict {
