@@ -25,7 +25,20 @@ func DefaultTemplate() map[string]any {
 		"hosts": map[string]any{
 			"dns.msftncsi.com": "131.107.255.255",
 		},
-		"profile": nil,
+		"profile": map[string]any{
+			// Persist the fake-ip → domain table across restarts and config
+			// reloads. Without this, a reload throws the table away while running
+			// clients still hold cached fake IPs from the old pool; the next
+			// connection arrives at an address mihomo can no longer map back to a
+			// domain, so it is routed by IP with no SNI and the client gets a
+			// certificate for the wrong host — surfacing as a TLS verification
+			// failure that clears up on its own once the client re-resolves.
+			"store-fake-ip": true,
+			// Persist manual selector choices, so reloading does not silently
+			// reset every group to its first member. Selections naming a group
+			// that no longer exists are dropped by mihomo.
+			"store-selected": true,
+		},
 		"dns": map[string]any{
 			"enable":        false,
 			"ipv6":          true,
