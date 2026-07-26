@@ -33,7 +33,7 @@ const minimalUpstreamYAML = `proxies:
 proxy-groups: []
 `
 
-func TestCollectSelectorsIncludesCustomChainsInOrder(t *testing.T) {
+func TestCollectSelectsIncludesCustomChainsInOrder(t *testing.T) {
 	cfg := Config{
 		Template: map[string]any{
 			"rules": []any{
@@ -47,10 +47,10 @@ func TestCollectSelectorsIncludesCustomChainsInOrder(t *testing.T) {
 		},
 	}
 
-	got := cfg.collectSelectors()
+	got := cfg.collectSelects()
 	want := []string{"PROXY", "CHATBOT", "ONEDRIVE", "STREAMING", "COMPLEX", "UDP", "UNKNOWN", "CNSITE"}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("collectSelectors() = %v, want %v", got, want)
+		t.Fatalf("collectSelects() = %v, want %v", got, want)
 	}
 }
 

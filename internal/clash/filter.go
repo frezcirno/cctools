@@ -28,7 +28,7 @@ var DefaultNodeOrganizers = []NodeOrganizer{
 	{name: "jp", matcher: isJP},
 	{name: "oversea", matcher: isOversea},
 	{name: "claude", matcher: claudeOk},
-	{name: "chatgpt", matcher: isOversea},
+	{name: "chatbot", matcher: isOversea},
 	{name: "udp", matcher: supportUDP},
 }
 

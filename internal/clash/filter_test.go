@@ -55,13 +55,14 @@ func organizerMatcher(t *testing.T, name string) func(YamlStrDict) bool {
 	return nil
 }
 
-// The claude group takes any US node, plus nodes advertising AI unlocking.
-func TestClaudeOrganizerTakesUSAndAINodes(t *testing.T) {
+// The claude group takes any US node, plus nodes explicitly labelled as
+// Claude/Anthropic wherever they are. A generic AI-unlock label is not enough.
+func TestClaudeOrganizerTakesUSAndClaudeNodes(t *testing.T) {
 	matcher := organizerMatcher(t, "claude")
 
 	match := []string{
 		"US-01", "US-Claude-01", "🇺🇸 Anthropic 解锁", "美国克劳德",
-		"JP|Claude/GPT", "美国AI解锁", "OpenAI|SG",
+		"JP|Claude/GPT", "美国AI解锁",
 	}
 	for _, name := range match {
 		if !matcher(YamlStrDict{"name": name}) {
@@ -69,9 +70,12 @@ func TestClaudeOrganizerTakesUSAndAINodes(t *testing.T) {
 		}
 	}
 
-	// Bare "ai" inside a larger word must not match, or Dubai/Shanghai nodes
-	// would leak in.
-	noMatch := []string{"香港 IEPL", "JP-Tokyo-01", "Dubai-01", "Shanghai IPLC"}
+	// "OpenAI|SG" advertises AI unlocking but is neither US nor Claude, so it
+	// stays out. "clauded"/"anthropics" have no word boundary either.
+	noMatch := []string{
+		"香港 IEPL", "JP-Tokyo-01", "Dubai-01", "Shanghai IPLC",
+		"OpenAI|SG", "claudex", "unclaude",
+	}
 	for _, name := range noMatch {
 		if matcher(YamlStrDict{"name": name}) {
 			t.Errorf("claude matcher(%q) = true, want false", name)
@@ -79,22 +83,22 @@ func TestClaudeOrganizerTakesUSAndAINodes(t *testing.T) {
 	}
 }
 
-// The chatgpt group selects on geography — anything outside CN/HK/TW — rather
+// The chatbot group selects on geography — anything outside CN/HK/TW — rather
 // than on an advertised AI-unlock label.
-func TestChatgptOrganizerTakesOverseaNodes(t *testing.T) {
-	matcher := organizerMatcher(t, "chatgpt")
+func TestChatbotOrganizerTakesOverseaNodes(t *testing.T) {
+	matcher := organizerMatcher(t, "chatbot")
 
 	match := []string{"JP-Tokyo-01", "US-01", "SG 新加坡", "美国AI解锁", "Dubai-01"}
 	for _, name := range match {
 		if !matcher(YamlStrDict{"name": name}) {
-			t.Errorf("chatgpt matcher(%q) = false, want true", name)
+			t.Errorf("chatbot matcher(%q) = false, want true", name)
 		}
 	}
 
 	noMatch := []string{"香港 IEPL", "🇭🇰 HK-01", "台湾 TW-02", "hong kong 02"}
 	for _, name := range noMatch {
 		if matcher(YamlStrDict{"name": name}) {
-			t.Errorf("chatgpt matcher(%q) = true, want false", name)
+			t.Errorf("chatbot matcher(%q) = true, want false", name)
 		}
 	}
 }

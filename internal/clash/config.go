@@ -201,7 +201,7 @@ func (c *Config) Generate(base BaseURL) (YamlStrDict, error) {
 	cfg := *c
 	cfg.Template = templateCopy
 
-	allSelectors := cfg.collectSelectors()
+	allSelects := cfg.collectSelects()
 
 	if err := cfg.applyBaseTemplateOptions(); err != nil {
 		return nil, err
@@ -217,13 +217,13 @@ func (c *Config) Generate(base BaseURL) (YamlStrDict, error) {
 	resolveAirportNameConflicts(airports)
 	allProxies := collectAllProxies(airports)
 	if allProxies.Len() == 0 {
-		// Fail closed: every selector would otherwise collapse to DIRECT and the
+		// Fail closed: every select would otherwise collapse to DIRECT and the
 		// client would silently install a config that routes all traffic
 		// unproxied. Returning an error lets the client keep its last-known-good.
 		return nil, &UpstreamUnavailableError{fmt.Errorf("no proxies collected from any configured upstream")}
 	}
 	cfg.Template["proxies"] = allProxies.Values()
-	cfg.Template["proxy-groups"] = cfg.buildProxyGroups(airports, allProxies, allSelectors)
+	cfg.Template["proxy-groups"] = cfg.buildProxyGroups(airports, allProxies, allSelects)
 
 	if err := cfg.transformRuleProviders(base); err != nil {
 		return nil, err
@@ -232,7 +232,7 @@ func (c *Config) Generate(base BaseURL) (YamlStrDict, error) {
 	return cfg.Template, nil
 }
 
-func (c *Config) collectSelectors() []string {
+func (c *Config) collectSelects() []string {
 	tplRulesRaw, ok := c.Template["rules"]
 	if !ok {
 		return []string{"PROXY", "UDP", "UNKNOWN", "CNSITE"}
@@ -252,7 +252,7 @@ func (c *Config) collectSelectors() []string {
 		"UNKNOWN":   {},
 		"CNSITE":    {},
 	}
-	customSelectors := []string{}
+	customSelects := []string{}
 	for _, ruleItem := range ruleItems {
 		rule, ok := ruleItem.(string)
 		if !ok {
@@ -266,10 +266,10 @@ func (c *Config) collectSelectors() []string {
 			continue
 		}
 		presetChains[chain] = struct{}{}
-		customSelectors = append(customSelectors, chain)
+		customSelects = append(customSelects, chain)
 	}
 
-	return append(append([]string{"PROXY"}, customSelectors...), "UDP", "UNKNOWN", "CNSITE")
+	return append(append([]string{"PROXY"}, customSelects...), "UDP", "UNKNOWN", "CNSITE")
 }
 
 func extractRuleTarget(rule string) (string, bool) {
@@ -452,7 +452,7 @@ func (c *Config) applyTunOptions() error {
 }
 
 func (c *Config) fetchAirports() map[string]*Airport {
-	log.Printf("Fetching airports for upstream selectors: %v", c.Upstream)
+	log.Printf("Fetching airports for upstream selects: %v", c.Upstream)
 	type pair struct {
 		k string
 		v *Airport
@@ -525,17 +525,39 @@ func collectAllProxies(airports map[string]*Airport) DictList {
 	return allProxies
 }
 
-func (c *Config) buildProxyGroups(airports map[string]*Airport, allProxies DictList, allSelectors []string) []YamlStrDict {
-	log.Printf("Building proxy groups: selectors=%d airports=%d proxies=%d", len(allSelectors)+len(c.TopSelect), len(airports), allProxies.Len())
+// buildProxyGroups emits the whole `proxy-groups` section, which has two tiers:
+//
+//   - url-test groups ("instance" groups) — the leaves. Each holds real proxies
+//     and auto-selects the lowest-latency one. Named `<scope>` or
+//     `<scope>-<organizer>`, where scope is either "all" (every upstream merged)
+//     or a single airport name: all, all-us, all-udp, glados, glados-us, …
+//   - select groups — the top-level chains rules dispatch to (PROXY, CLAUDE,
+//     CNSITE, …). These hold no proxies of their own; their members are the
+//     url-test group names above, so the user picks a *policy* ("route Claude
+//     through all-us") and latency handling stays automatic underneath.
+//
+// Selects come first in the returned slice because Clash clients list groups
+// in file order, and the chains a user actually switches belong at the top.
+func (c *Config) buildProxyGroups(airports map[string]*Airport, allProxies DictList, allSelects []string) []YamlStrDict {
+	log.Printf("Building proxy groups: selects=%d airports=%d proxies=%d", len(allSelects)+len(c.TopSelect), len(airports), allProxies.Len())
 	instanceURLTestGroups := []YamlStrDict{}
 	groupKey := "all"
 
+	// The cross-airport groups: every proxy merged, then one subgroup per
+	// organizer the request asked for. Generate already rejects a zero-proxy
+	// result, so the guard is belt-and-braces against an empty url-test group,
+	// which Clash rejects as invalid.
 	if allProxies.Len() > 0 {
 		instanceURLTestGroups = append(instanceURLTestGroups, makeURLTestGroup(groupKey, allProxies.Keys()))
 	}
 
 	instanceURLTestGroups = append(instanceURLTestGroups, c.buildOrganizerGroups(groupKey, allProxies)...)
 
+	// Then the same shape again, scoped to each airport, so a user can pin a
+	// chain to one subscription. Airports are walked in sorted order and their
+	// proxy names sorted, so identical requests render byte-identical YAML.
+	// Here the emptiness guard is load-bearing: one airport can come back empty
+	// while others succeeded.
 	for _, name := range sortedAirportKeys(airports) {
 		airportProxies := airports[name].Proxies
 		if airportProxies.Len() > 0 {
@@ -546,6 +568,9 @@ func (c *Config) buildProxyGroups(airports map[string]*Airport, allProxies DictL
 		instanceURLTestGroups = append(instanceURLTestGroups, c.buildOrganizerGroups(name, airportProxies)...)
 	}
 
+	// The names collected here become the menu offered to every select below.
+	// A group whose name is unreadable is skipped rather than fatal: it would
+	// only ever be an unselectable entry, not a broken config.
 	instanceGroupKeys := []string{}
 	for _, g := range instanceURLTestGroups {
 		groupName, err := asString(g["name"], "proxy-group.name")
@@ -555,16 +580,19 @@ func (c *Config) buildProxyGroups(airports map[string]*Airport, allProxies DictL
 		instanceGroupKeys = append(instanceGroupKeys, groupName)
 	}
 
-	instanceSelectorGroups := []YamlStrDict{}
-	for _, selector := range append(allSelectors, c.TopSelect...) {
-		instanceSelectorGroups = append(instanceSelectorGroups, YamlStrDict{
-			"name":    selector,
+	// allSelects are the chains discovered in the template's rules; TopSelect
+	// is whatever extra chains the request asked for. selectProxies decides
+	// each one's default (and whether DIRECT is offered at all).
+	instanceSelectGroups := []YamlStrDict{}
+	for _, _select := range append(allSelects, c.TopSelect...) {
+		instanceSelectGroups = append(instanceSelectGroups, YamlStrDict{
+			"name":    _select,
 			"type":    "select",
-			"proxies": selectorProxies(selector, instanceGroupKeys),
+			"proxies": selectProxies(_select, instanceGroupKeys),
 		})
 	}
 
-	return append(instanceSelectorGroups, instanceURLTestGroups...)
+	return append(instanceSelectGroups, instanceURLTestGroups...)
 }
 
 const (
@@ -625,8 +653,8 @@ func (c *Config) buildOrganizerGroups(prefix string, proxies DictList) []YamlStr
 	return groups
 }
 
-func selectorProxies(selector string, groupKeys []string) []string {
-	switch selector {
+func selectProxies(_select string, groupKeys []string) []string {
+	switch _select {
 	case "PROXY":
 		return append(groupKeys, "DIRECT")
 	case "UNKNOWN":

@@ -162,7 +162,7 @@ var knownConfigQueryKeys = map[string]struct{}{
 	// these). Wiring them up — or removing the corresponding form controls — is
 	// tracked separately; they are whitelisted here only to avoid per-request
 	// "unrecognized query parameter" log spam.
-	"keep_upstream_selector":     {},
+	"keep_upstream_select":       {},
 	"custom_rules":               {},
 	"tun_auto_route":             {},
 	"port_proxy":                 {},
