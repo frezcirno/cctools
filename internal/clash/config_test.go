@@ -2,6 +2,7 @@ package clash
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -38,7 +39,7 @@ func TestCollectSelectorsIncludesCustomChainsInOrder(t *testing.T) {
 			"rules": []any{
 				"GEOSITE,openai,CHATBOT",
 				"DOMAIN-SUFFIX,live.com,ONEDRIVE",
-				"MATCH,FALLBACK",
+				"MATCH,UNKNOWN",
 				"IP-CIDR,1.1.1.0/24,STREAMING,no-resolve",
 				"AND,((DOMAIN,foo.com),(NETWORK,UDP)),COMPLEX",
 				123,
@@ -59,7 +60,7 @@ func TestExtractRuleTargetSupportsMultipleClashRuleForms(t *testing.T) {
 		want string
 		ok   bool
 	}{
-		{rule: "MATCH,FALLBACK", want: "UNKNOWN", ok: true},
+		{rule: "MATCH,UNKNOWN", want: "UNKNOWN", ok: true},
 		{rule: "DOMAIN-SUFFIX,google.com,PROXY", want: "PROXY", ok: true},
 		{rule: "IP-CIDR,1.1.1.0/24,CHATBOT,no-resolve", want: "CHATBOT", ok: true},
 		{rule: "RULE-SET,openai,CHATBOT", want: "CHATBOT", ok: true},
@@ -137,13 +138,49 @@ func TestDeepCopyTemplateCreatesIndependentCopy(t *testing.T) {
 	}
 }
 
+// TestGenerateValidatesBeforeFetching checks that Generate runs validation
+// itself — callers no longer call a separate Validate — and reports the failure
+// as *InvalidConfigError without touching any upstream.
+func TestGenerateValidatesBeforeFetching(t *testing.T) {
+	base := BaseURL{Scheme: "http", Host: "example.com"}
+	upstreams := map[string]AirportSpec{
+		// A URL that must never be fetched: reaching it means validation was
+		// skipped, and the fetch would fail the test with a different error.
+		"t": {Name: "t", Urls: []string{"file:///nonexistent/must-not-be-read.yaml"}},
+	}
+
+	cases := map[string]Config{
+		"port out of range": {Upstreams: upstreams, HttpPort: 70000},
+		"bad enhanced_mode": {Upstreams: upstreams, EnhancedMode: "nope"},
+		"tun without stack": {Upstreams: upstreams, Tun: true},
+		"dns without listen": {
+			Upstreams: upstreams, Dns: true, EnhancedMode: "fake-ip", Nameserver: []string{"1.1.1.1"},
+		},
+		"missing upstreams": {},
+	}
+
+	for name, cfg := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg := cfg
+			_, err := cfg.Generate(base)
+			if err == nil {
+				t.Fatalf("Generate() error = nil, want *InvalidConfigError")
+			}
+			var invalid *InvalidConfigError
+			if !errors.As(err, &invalid) {
+				t.Fatalf("Generate() error = %T (%v), want *InvalidConfigError", err, err)
+			}
+		})
+	}
+}
+
 func TestGenerateDoesNotMutateOriginalTemplate(t *testing.T) {
 	t.Setenv("DISABLE_CACHE", "1")
 
 	originalTemplate := map[string]any{
 		"rules": []any{
 			"GEOSITE,openai,CHATBOT",
-			"MATCH,FALLBACK",
+			"MATCH,UNKNOWN",
 		},
 		"proxy-groups": []any{},
 		"proxies":      []any{},
@@ -270,7 +307,7 @@ func TestClassifyProxiesUsesClassifierRegistry(t *testing.T) {
 		YamlStrDict{"name": "日本节点", "udp": false},
 	)
 
-	classified := classifyProxies(proxies, organizerClassifiers)
+	classified := ClassifyNodes(proxies, NodeClassifiers)
 
 	if !reflect.DeepEqual(classified["cn"], []string{"香港节点", "台湾节点"}) {
 		t.Fatalf("classified cn = %v", classified["cn"])

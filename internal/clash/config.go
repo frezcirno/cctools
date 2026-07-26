@@ -67,8 +67,9 @@ func validatePort(name string, port int) error {
 	return nil
 }
 
-// Validate rejects option combinations that would produce a broken config.
-func (c *Config) Validate() error {
+// validate rejects option combinations that would produce a broken config.
+// Generate runs it before doing any work, so callers never invoke it directly.
+func (c *Config) validate() error {
 	if c.Upstreams == nil {
 		return fmt.Errorf("need upstreams")
 	}
@@ -178,7 +179,14 @@ func (c *Config) hasOrganizerGroup(key string) bool {
 
 // Generate renders the final Clash config. base is how the generated document
 // should address this server when rewriting rule-provider URLs.
+//
+// The options are validated first, so an inconsistent Config fails fast with
+// *InvalidConfigError before any upstream is fetched.
 func (c *Config) Generate(base BaseURL) (YamlStrDict, error) {
+	if err := c.validate(); err != nil {
+		return nil, &InvalidConfigError{err}
+	}
+
 	templateCopy, err := deepCopyTemplate(c.Template)
 	if err != nil {
 		return nil, err
@@ -582,40 +590,18 @@ func makeURLTestGroup(name string, proxies []string) YamlStrDict {
 
 func (c *Config) buildOrganizerGroups(prefix string, proxies DictList) []YamlStrDict {
 	groups := []YamlStrDict{}
-	classified := classifyProxies(proxies, organizerClassifiers)
+	classified := ClassifyNodes(proxies, NodeClassifiers)
 
-	for _, organizer := range organizerClassifiers {
-		matched := classified[organizer.name]
-		if !c.hasOrganizerGroup(organizer.name) || len(matched) == 0 {
+	for _, classifier := range NodeClassifiers {
+		matched := classified[classifier.name]
+		if !c.hasOrganizerGroup(classifier.name) || len(matched) == 0 {
 			continue
 		}
 		sort.Strings(matched)
-		groups = append(groups, makeURLTestGroup(fmt.Sprintf("%s-%s", prefix, organizer.name), matched))
+		groups = append(groups, makeURLTestGroup(fmt.Sprintf("%s-%s", prefix, classifier.name), matched))
 	}
 
 	return groups
-}
-
-func classifyProxies(proxies DictList, classifiers []struct {
-	name    string
-	matcher func(YamlStrDict) bool
-}) map[string][]string {
-	classified := make(map[string][]string, len(classifiers))
-	for _, classifier := range classifiers {
-		classified[classifier.name] = []string{}
-	}
-	proxies.ForEach(func(_ string, proxy YamlStrDict) {
-		name, err := asString(proxy["name"], "proxy.name")
-		if err != nil {
-			return
-		}
-		for _, classifier := range classifiers {
-			if classifier.matcher(proxy) {
-				classified[classifier.name] = append(classified[classifier.name], name)
-			}
-		}
-	})
-	return classified
 }
 
 func selectorProxies(selector string, groupKeys []string) []string {

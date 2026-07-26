@@ -103,6 +103,14 @@ func (b BaseURL) Resolve(raw string) string {
 	return b.String() + raw
 }
 
+// InvalidConfigError signals that the requested options are out of range or
+// mutually inconsistent, so the request should fail (400) rather than emit a
+// broken config. Generate returns it before fetching anything.
+type InvalidConfigError struct{ Err error }
+
+func (e *InvalidConfigError) Error() string { return e.Err.Error() }
+func (e *InvalidConfigError) Unwrap() error { return e.Err }
+
 // UpstreamUnavailableError signals that no usable proxy data could be collected
 // from any configured upstream, so the request should fail (502) rather than
 // return a syntactically valid but proxy-less config.

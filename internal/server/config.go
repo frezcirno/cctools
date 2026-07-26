@@ -31,8 +31,9 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	out, err := buildConfig(r)
 	if err != nil {
 		var badRequest *badRequestError
+		var invalidConfig *clash.InvalidConfigError
 		var unavailable *clash.UpstreamUnavailableError
-		if errors.As(err, &badRequest) {
+		if errors.As(err, &badRequest) || errors.As(err, &invalidConfig) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 		} else if errors.As(err, &unavailable) {
 			log.Printf("Upstream unavailable: %v\n", err)
@@ -125,10 +126,9 @@ func buildConfig(r *http.Request) ([]byte, error) {
 		return nil, err
 	}
 
-	if err = c.Validate(); err != nil {
-		return nil, &badRequestError{err}
-	}
-
+	// Generate validates the assembled options itself and reports an
+	// inconsistent Config as *clash.InvalidConfigError, which handleConfig maps
+	// to 400 alongside the parameter-parsing failures above.
 	instance, err := c.Generate(baseURL(r))
 	if err != nil {
 		return nil, err

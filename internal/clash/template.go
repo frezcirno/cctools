@@ -446,7 +446,7 @@ func DefaultTemplate() map[string]any {
 			"RULE-SET,telegramcidr,PROXY",
 			"RULE-SET,proxy,PROXY",
 			"NETWORK,udp,UDP",
-			"MATCH,FALLBACK",
+			"MATCH,UNKNOWN",
 		},
 	}
 }

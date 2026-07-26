@@ -9,10 +9,12 @@ var US *regexp.Regexp = regexp.MustCompile(`(?i)(\b(us|usa|united states|america
 var SG *regexp.Regexp = regexp.MustCompile(`(?i)(\b(sg|singapore)\b|🇸🇬|新加坡|狮城|獅城)`)
 var JP *regexp.Regexp = regexp.MustCompile(`(?i)(\b(jp|japan|tokyo|osaka)\b|🇯🇵|日本|东京|大阪|東京)`)
 
-var organizerClassifiers = []struct {
+type NodeClassifier struct {
 	name    string
 	matcher func(YamlStrDict) bool
-}{
+}
+
+var NodeClassifiers = []NodeClassifier{
 	{name: "cn", matcher: isCN},
 	{name: "tw", matcher: isTW},
 	{name: "us", matcher: isUS},
@@ -20,6 +22,25 @@ var organizerClassifiers = []struct {
 	{name: "jp", matcher: isJP},
 	{name: "oversea", matcher: isOversea},
 	{name: "udp", matcher: isUDP},
+}
+
+func ClassifyNodes(proxies DictList, classifiers []NodeClassifier) map[string][]string {
+	classified := make(map[string][]string, len(classifiers))
+	for _, classifier := range classifiers {
+		classified[classifier.name] = []string{}
+	}
+	proxies.ForEach(func(_ string, proxy YamlStrDict) {
+		name, err := asString(proxy["name"], "proxy.name")
+		if err != nil {
+			return
+		}
+		for _, classifier := range classifiers {
+			if classifier.matcher(proxy) {
+				classified[classifier.name] = append(classified[classifier.name], name)
+			}
+		}
+	})
+	return classified
 }
 
 func proxyName(proxy YamlStrDict) (string, bool) {
