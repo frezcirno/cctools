@@ -1,12 +1,12 @@
-package main
+package safehttp
 
 import (
-	"bytes"
 	"net"
+	"net/url"
 	"testing"
 )
 
-func TestIsDisallowedUpstreamIP(t *testing.T) {
+func TestIsDisallowedIP(t *testing.T) {
 	cases := []struct {
 		ip   string
 		want bool
@@ -35,13 +35,13 @@ func TestIsDisallowedUpstreamIP(t *testing.T) {
 		if ip == nil {
 			t.Fatalf("bad test IP %q", tc.ip)
 		}
-		if got := isDisallowedUpstreamIP(ip); got != tc.want {
-			t.Errorf("isDisallowedUpstreamIP(%s) = %v, want %v", tc.ip, got, tc.want)
+		if got := IsDisallowedIP(ip); got != tc.want {
+			t.Errorf("IsDisallowedIP(%s) = %v, want %v", tc.ip, got, tc.want)
 		}
 	}
 }
 
-func TestValidateProxyUpstream(t *testing.T) {
+func TestValidateUpstreamURL(t *testing.T) {
 	// IP-literal hosts so no DNS lookup is needed.
 	bad := []string{
 		"",                    // missing url
@@ -57,8 +57,8 @@ func TestValidateProxyUpstream(t *testing.T) {
 		"http://0.0.0.0/",     // unspecified
 	}
 	for _, raw := range bad {
-		if _, err := validateProxyUpstream(raw); err == nil {
-			t.Errorf("validateProxyUpstream(%q) = nil error, want error", raw)
+		if _, err := ValidateUpstreamURL(raw); err == nil {
+			t.Errorf("ValidateUpstreamURL(%q) = nil error, want error", raw)
 		}
 	}
 
@@ -67,32 +67,23 @@ func TestValidateProxyUpstream(t *testing.T) {
 		"https://1.1.1.1/rules",
 	}
 	for _, raw := range good {
-		if _, err := validateProxyUpstream(raw); err != nil {
-			t.Errorf("validateProxyUpstream(%q) = %v, want nil", raw, err)
+		if _, err := ValidateUpstreamURL(raw); err != nil {
+			t.Errorf("ValidateUpstreamURL(%q) = %v, want nil", raw, err)
 		}
 	}
 }
 
-func TestConvertRawListToRuleProvider(t *testing.T) {
-	withRules, has := convertRawListToRuleProvider([]byte("DOMAIN,example.com\n# a comment\nIP-CIDR,1.1.1.0/24\n"))
-	if !has {
-		t.Fatal("expected hasRules=true")
+func TestRedactURLStripsCredentials(t *testing.T) {
+	u, err := url.Parse("https://user:pw@example.com/sub?token=secret#frag")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
 	}
-	if !bytes.Contains(withRules, []byte("payload:")) || !bytes.Contains(withRules, []byte(" - DOMAIN,example.com")) {
-		t.Fatalf("expected payload + rule lines, got:\n%s", withRules)
+	got := RedactURL(u)
+	want := "https://example.com/sub?REDACTED"
+	if got != want {
+		t.Fatalf("RedactURL() = %q, want %q", got, want)
 	}
-
-	// Comment-only and empty inputs must still produce a valid payload mapping.
-	for _, in := range []string{"# only a comment\n\n", ""} {
-		out, has := convertRawListToRuleProvider([]byte(in))
-		if has {
-			t.Errorf("input %q: expected hasRules=false", in)
-		}
-		if !bytes.Contains(out, []byte("payload: []")) {
-			t.Errorf("input %q: expected 'payload: []', got:\n%s", in, out)
-		}
-		if bytes.Contains(out, []byte("\n - ")) {
-			t.Errorf("input %q: unexpected rule line in degenerate output:\n%s", in, out)
-		}
+	if RedactURL(nil) != "" {
+		t.Fatalf("RedactURL(nil) should be empty")
 	}
 }

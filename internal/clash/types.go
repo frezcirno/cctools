@@ -1,51 +1,19 @@
-package main
+// Package clash renders a Clash/mihomo YAML config from a set of subscription
+// upstreams and a base template.
+//
+// The base config (mode, dns/tun internals, hosts, cors, rule-providers and
+// rules) is built in Go by DefaultTemplate; a Config describes the per-request
+// overrides and Generate produces the final document.
+package clash
 
 import (
 	"errors"
 	"fmt"
+	"net/url"
 )
 
-// AirportSpec
-type AirportSpec struct {
-	Name          string   `yaml:"name"`
-	Urls          []string `yaml:"urls"`
-	Ttl           int      `yaml:"ttl"`
-	Tags          []string `yaml:"tag"`
-	UseCacheOnErr bool     `yaml:"use-cache-on-err"`
-	Enable        *bool    `yaml:"enable"`
-}
-
-func (as *AirportSpec) enabled() bool {
-	return as.Enable == nil || *as.Enable
-}
-
-func (as *AirportSpec) tags() []string {
-	tags := append(as.Tags, as.Name, "all")
-	return tags
-}
-
-// Airport is the set of proxies parsed from one upstream. Upstream
-// proxy-groups are intentionally not retained: the output proxy-groups are
-// synthesized fresh from the proxies in buildProxyGroups, so keeping the
-// upstreams' own groups would be dead data.
-type Airport struct {
-	Proxies DictList `yaml:"proxies"`
-}
-
-func (airport *Airport) renameProxy(key string, new_key string) error {
-	if airport.Proxies.get(new_key) != nil {
-		return fmt.Errorf("proxy %s already exists", new_key)
-	}
-
-	proxy := airport.Proxies.get(key)
-	if proxy == nil {
-		return fmt.Errorf("proxy %s not found", key)
-	}
-
-	airport.Proxies.del(key)
-	airport.Proxies.set(new_key, proxy)
-	return nil
-}
+// YamlStrDict is the in-memory shape of every YAML mapping we manipulate.
+type YamlStrDict map[string]any
 
 func asString(v any, field string) (string, error) {
 	s, ok := v.(string)
@@ -108,23 +76,42 @@ func asStringAnyMapField(m map[string]any, key string) (map[string]any, error) {
 	return asStringAnyMap(v, key)
 }
 
-func (airport *Airport) removeProxy(key string) {
-	airport.Proxies.del(key)
+// BaseURL is how a generated config should address this server, used to rewrite
+// rule-provider URLs back through /rule-providers and /convert.
+type BaseURL struct {
+	Scheme string
+	Host   string
 }
 
-func (airport *Airport) filterProxy(filter func(YamlStrDict) bool) {
-	toRemove := []string{}
-	airport.Proxies.each(func(key string, proxy YamlStrDict) {
-		if !filter(proxy) {
-			toRemove = append(toRemove, key)
-		}
-	})
-	for _, key := range toRemove {
-		airport.removeProxy(key)
+// String renders the origin, e.g. "https://sub.example.com".
+func (b BaseURL) String() string {
+	return fmt.Sprintf("%s://%s", b.Scheme, b.Host)
+}
+
+// Resolve turns a possibly-relative URL into an absolute one rooted at b.
+func (b BaseURL) Resolve(raw string) string {
+	if raw == "" {
+		return raw
 	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	if parsed.IsAbs() {
+		return raw
+	}
+	return b.String() + raw
 }
 
-// Platform
+// UpstreamUnavailableError signals that no usable proxy data could be collected
+// from any configured upstream, so the request should fail (502) rather than
+// return a syntactically valid but proxy-less config.
+type UpstreamUnavailableError struct{ Err error }
+
+func (e *UpstreamUnavailableError) Error() string { return e.Err.Error() }
+func (e *UpstreamUnavailableError) Unwrap() error { return e.Err }
+
+// Platform is the client OS, detected from the request User-Agent.
 type Platform string
 
 const (
@@ -135,7 +122,8 @@ const (
 	Other   Platform = "other"
 )
 
-// RuleProviderTransform
+// RuleProviderTransform selects how template rule-providers are rewritten:
+// passed through, proxied via this server, or inlined as literal rules.
 type RuleProviderTransform string
 
 const (
@@ -144,7 +132,7 @@ const (
 	RPT_INLINE RuleProviderTransform = "inline"
 )
 
-func StringToRuleProviderTransform(s string) (RuleProviderTransform, error) {
+func ParseRuleProviderTransform(s string) (RuleProviderTransform, error) {
 	switch s {
 	case string(RPT_NONE), string(RPT_PROXY), string(RPT_INLINE):
 		return RuleProviderTransform(s), nil
@@ -153,7 +141,8 @@ func StringToRuleProviderTransform(s string) (RuleProviderTransform, error) {
 	}
 }
 
-// ExternalControllerType
+// ExternalControllerType selects which external-controller listener the
+// generated config exposes (if any).
 type ExternalControllerType string
 
 const (
@@ -163,7 +152,7 @@ const (
 	UNIX  ExternalControllerType = "unix"
 )
 
-func StringToExternalControllerType(s string) (ExternalControllerType, error) {
+func ParseExternalControllerType(s string) (ExternalControllerType, error) {
 	switch s {
 	case string(NONE), string(HTTP), string(HTTPS), string(UNIX):
 		return ExternalControllerType(s), nil

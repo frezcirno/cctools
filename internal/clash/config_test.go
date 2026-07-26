@@ -1,8 +1,7 @@
-package main
+package clash
 
 import (
 	"bytes"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -86,15 +85,15 @@ func TestAirportSpecEnabledDefaultsToTrueWhenMissing(t *testing.T) {
 	if err := yaml.Unmarshal([]byte("name: demo\nurls: [https://example.com]\n"), &spec); err != nil {
 		t.Fatalf("yaml.Unmarshal() error = %v", err)
 	}
-	if !spec.enabled() {
-		t.Fatalf("enabled() = false, want true when enable is missing")
+	if !spec.Enabled() {
+		t.Fatalf("Enabled() = false, want true when enable is missing")
 	}
 }
 
 func TestAirportSpecEnabledHonorsExplicitFalse(t *testing.T) {
 	spec := AirportSpec{Enable: boolPtr(false)}
-	if spec.enabled() {
-		t.Fatalf("enabled() = true, want false")
+	if spec.Enabled() {
+		t.Fatalf("Enabled() = true, want false")
 	}
 }
 
@@ -104,8 +103,8 @@ func TestAirportSpecReadsTagField(t *testing.T) {
 		t.Fatalf("yaml.Unmarshal() error = %v", err)
 	}
 	want := []string{"default", "test", "demo", "all"}
-	if got := spec.tags(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("tags() = %v, want %v", got, want)
+	if got := spec.AllTags(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("AllTags() = %v, want %v", got, want)
 	}
 }
 
@@ -139,6 +138,8 @@ func TestDeepCopyTemplateCreatesIndependentCopy(t *testing.T) {
 }
 
 func TestGenerateDoesNotMutateOriginalTemplate(t *testing.T) {
+	t.Setenv("DISABLE_CACHE", "1")
+
 	originalTemplate := map[string]any{
 		"rules": []any{
 			"GEOSITE,openai,CHATBOT",
@@ -172,10 +173,10 @@ func TestGenerateDoesNotMutateOriginalTemplate(t *testing.T) {
 		Fallback:                 []string{"https://1.0.0.1/dns-query"},
 	}
 
-	req := httptest.NewRequest("GET", "http://example.com/clash/config.yaml", nil)
-	generated, err := cfg.generate(req)
+	base := BaseURL{Scheme: "http", Host: "example.com"}
+	generated, err := cfg.Generate(base)
 	if err != nil {
-		t.Fatalf("generate() error = %v", err)
+		t.Fatalf("Generate() error = %v", err)
 	}
 
 	if generated["secret"] != "secret-1" {
@@ -360,13 +361,13 @@ func TestGenerateIsDeterministic(t *testing.T) {
 			Upstreams: map[string]AirportSpec{"aaa": {Name: "aaa", Urls: []string{up1}}, "bbb": {Name: "bbb", Urls: []string{up2}}},
 		}
 	}
-	req := httptest.NewRequest("GET", "http://example.com/clash/config.yaml", nil)
+	base := BaseURL{Scheme: "http", Host: "example.com"}
 
 	render := func() []byte {
 		cfg := newCfg()
-		out, err := cfg.generate(req)
+		out, err := cfg.Generate(base)
 		if err != nil {
-			t.Fatalf("generate() error = %v", err)
+			t.Fatalf("Generate() error = %v", err)
 		}
 		b, err := yaml.Marshal(out)
 		if err != nil {
@@ -378,7 +379,7 @@ func TestGenerateIsDeterministic(t *testing.T) {
 	first := render()
 	for i := 0; i < 3; i++ {
 		if got := render(); !bytes.Equal(first, got) {
-			t.Fatalf("generate() output is not deterministic across runs")
+			t.Fatalf("Generate() output is not deterministic across runs")
 		}
 	}
 	// The "bbb" airport's colliding "shared" proxy must get the deterministic suffix.

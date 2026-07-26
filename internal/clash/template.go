@@ -1,14 +1,14 @@
-package main
+package clash
 
 // Code generated from the original template.yaml. DO NOT EDIT by hand.
 //
-// defaultTemplate returns the built-in base clash config, formerly shipped as
+// DefaultTemplate returns the built-in base clash config, formerly shipped as
 // template.yaml. It is the single Go source of truth for all non-form,
 // structural config (mode, dns/tun internals, hosts, cors, rule-providers,
 // rules). The `proxies` and `proxy-groups` keys are placeholders here — they
-// are always overwritten by Config.generate. A fresh map is built on every call
+// are always overwritten by Config.Generate. A fresh map is built on every call
 // so callers may mutate it freely.
-func defaultTemplate() map[string]any {
+func DefaultTemplate() map[string]any {
 	return map[string]any{
 		"mode":                "rule",
 		"external-controller": nil,
@@ -241,15 +241,33 @@ func defaultTemplate() map[string]any {
 			"DST-PORT,22,CNSITE",
 			"RULE-SET,zju_internal,CNSITE",
 			"RULE-SET,scholar,PROXY",
-			"GEOSITE,openai,CHATBOT",
-			"RULE-SET,openai,CHATBOT",
+			// Claude / Anthropic 走独立的 CLAUDE 组
+			"DOMAIN-SUFFIX,anthropic.com,CLAUDE",
+			"DOMAIN-SUFFIX,claude.ai,CLAUDE",
+			"DOMAIN-SUFFIX,claude.com,CLAUDE",
+			"DOMAIN-SUFFIX,claudeusercontent.com,CLAUDE",
+			"DOMAIN-SUFFIX,claudemcpclient.com,CLAUDE",
+			"DOMAIN-KEYWORD,claude,CLAUDE",
+			// Codex / OpenAI 走独立的 CODEX 组
+			"GEOSITE,openai,CODEX",
+			"RULE-SET,openai,CODEX",
+			"DOMAIN,chat.openai.com.cdn.cloudflare.net,CODEX",
+			"DOMAIN,openai-api.arkoselabs.com,CODEX",
+			"DOMAIN,openaicom-api-bdcpf8c6d2e9atf6.z01.azurefd.net,CODEX",
+			"DOMAIN,openaicomproductionae4b.blob.core.windows.net,CODEX",
+			"DOMAIN,production-openaicom-storage.azureedge.net,CODEX",
+			"DOMAIN-SUFFIX,chatgpt.com,CODEX",
+			"DOMAIN-SUFFIX,chatgpt.livekit.cloud,CODEX",
+			"DOMAIN-SUFFIX,client-api.arkoselabs.com,CODEX",
+			"DOMAIN-SUFFIX,oaistatic.com,CODEX",
+			"DOMAIN-SUFFIX,oaiusercontent.com,CODEX",
+			"DOMAIN-SUFFIX,openai-proxy.org,CODEX",
+			"DOMAIN-SUFFIX,openai-proxy.live,CODEX",
+			"DOMAIN-SUFFIX,closeai-proxy.xyz,CODEX",
+			"DOMAIN-KEYWORD,openai,CODEX",
+			// 其余 AI 服务仍然走通用的 CHATBOT 组
 			"RULE-SET,chatbot,CHATBOT",
 			"DOMAIN,browser-intake-datadoghq.com,CHATBOT",
-			"DOMAIN,chat.openai.com.cdn.cloudflare.net,CHATBOT",
-			"DOMAIN,openai-api.arkoselabs.com,CHATBOT",
-			"DOMAIN,openaicom-api-bdcpf8c6d2e9atf6.z01.azurefd.net,CHATBOT",
-			"DOMAIN,openaicomproductionae4b.blob.core.windows.net,CHATBOT",
-			"DOMAIN,production-openaicom-storage.azureedge.net,CHATBOT",
 			"DOMAIN,ai.google.dev,CHATBOT",
 			"DOMAIN,alkalicore-pa.clients6.google.com,CHATBOT",
 			"DOMAIN,alkalimakersuite-pa.clients6.google.com,CHATBOT",
@@ -268,9 +286,6 @@ func defaultTemplate() map[string]any {
 			"DOMAIN-SUFFIX,algolia.net,CHATBOT",
 			"DOMAIN-SUFFIX,api.statsig.com,CHATBOT",
 			"DOMAIN-SUFFIX,auth0.com,CHATBOT",
-			"DOMAIN-SUFFIX,chatgpt.com,CHATBOT",
-			"DOMAIN-SUFFIX,chatgpt.livekit.cloud,CHATBOT",
-			"DOMAIN-SUFFIX,client-api.arkoselabs.com,CHATBOT",
 			"DOMAIN-SUFFIX,events.statsigapi.net,CHATBOT",
 			"DOMAIN-SUFFIX,featuregates.org,CHATBOT",
 			"DOMAIN-SUFFIX,host.livekit.cloud,CHATBOT",
@@ -278,31 +293,19 @@ func defaultTemplate() map[string]any {
 			"DOMAIN-SUFFIX,intercom.io,CHATBOT",
 			"DOMAIN-SUFFIX,intercomcdn.com,CHATBOT",
 			"DOMAIN-SUFFIX,launchdarkly.com,CHATBOT",
-			"DOMAIN-SUFFIX,oaistatic.com,CHATBOT",
-			"DOMAIN-SUFFIX,oaiusercontent.com,CHATBOT",
 			"DOMAIN-SUFFIX,observeit.net,CHATBOT",
 			"DOMAIN-SUFFIX,segment.io,CHATBOT",
 			"DOMAIN-SUFFIX,sentry.io,CHATBOT",
 			"DOMAIN-SUFFIX,turn.livekit.cloud,CHATBOT",
 			"DOMAIN-SUFFIX,openrouter.ai,CHATBOT",
-			"DOMAIN-SUFFIX,anthropic.com,CHATBOT",
-			"DOMAIN-SUFFIX,claude.ai,CHATBOT",
-			"DOMAIN-SUFFIX,claude.com,CHATBOT",
-			"DOMAIN-SUFFIX,claudeusercontent.com,CHATBOT",
-			"DOMAIN-SUFFIX,claudemcpclient.com,CHATBOT",
 			"DOMAIN-SUFFIX,cursor-cdn.com,CHATBOT",
 			"DOMAIN-SUFFIX,cursor.com,CHATBOT",
 			"DOMAIN-SUFFIX,cursor.sh,CHATBOT",
 			"DOMAIN-SUFFIX,cursorapi.com,CHATBOT",
-			"DOMAIN-KEYWORD,openai,CHATBOT",
-			"DOMAIN-KEYWORD,claude,CHATBOT",
 			"DOMAIN-SUFFIX,linkedin.cn,PROXY",
 			"DOMAIN-SUFFIX,linkedin.com,PROXY",
 			"DOMAIN-SUFFIX,live.com,ONEDRIVE",
 			"DOMAIN-SUFFIX,perplexity.ai,CHATBOT",
-			"DOMAIN-SUFFIX,openai-proxy.org,CHATBOT",
-			"DOMAIN-SUFFIX,openai-proxy.live,CHATBOT",
-			"DOMAIN-SUFFIX,closeai-proxy.xyz,CHATBOT",
 			"DOMAIN-SUFFIX,hf-mirror.com,CNSITE",
 			"DOMAIN,hd.mmstat.com,CNSITE",
 			"DOMAIN,h-adashx.ut.taobao.com,CNSITE",

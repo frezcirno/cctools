@@ -1,13 +1,24 @@
-package main
+package vfs
 
 import (
+	"fmt"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
+var keySeq atomic.Int64
+
+// tmpKey returns a path unique to this test run, so tests never collide in the
+// process-wide overlay map.
+func tmpKey(t *testing.T) string {
+	t.Helper()
+	return fmt.Sprintf("/tmp/vfs_test_%s_%d", t.Name(), keySeq.Add(1))
+}
+
 func TestMemfsStoreLoadRoundTrip(t *testing.T) {
-	key := "/tmp/test_memfs_" + randomStr(8)
+	key := tmpKey(t)
 	data := []byte("test data")
 
 	memfsStore(key, data)
@@ -22,7 +33,7 @@ func TestMemfsStoreLoadRoundTrip(t *testing.T) {
 }
 
 func TestMemfsLoadReturnsErrNotExist(t *testing.T) {
-	_, err := memfsLoad("/tmp/nonexistent_" + randomStr(8))
+	_, err := memfsLoad(tmpKey(t))
 	if err == nil {
 		t.Fatal("memfsLoad should return error for missing key")
 	}
@@ -32,7 +43,7 @@ func TestMemfsLoadReturnsErrNotExist(t *testing.T) {
 }
 
 func TestMemfsStatReturnsCorrectInfo(t *testing.T) {
-	key := "/tmp/test_memfs_stat_" + randomStr(8)
+	key := tmpKey(t)
 	data := []byte("hello world")
 
 	memfsStore(key, data)
@@ -50,7 +61,7 @@ func TestMemfsStatReturnsCorrectInfo(t *testing.T) {
 }
 
 func TestMemfsStatReturnsErrForMissing(t *testing.T) {
-	_, err := memfsStat("/tmp/nonexistent_" + randomStr(8))
+	_, err := memfsStat(tmpKey(t))
 	if err == nil {
 		t.Fatal("memfsStat should return error for missing key")
 	}
@@ -58,7 +69,7 @@ func TestMemfsStatReturnsErrForMissing(t *testing.T) {
 
 func TestMemfsConcurrentAccess(t *testing.T) {
 	var wg sync.WaitGroup
-	key := "/tmp/test_concurrent_" + randomStr(8)
+	key := tmpKey(t)
 
 	for i := 0; i < 100; i++ {
 		wg.Add(2)

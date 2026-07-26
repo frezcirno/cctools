@@ -1,10 +1,8 @@
-package main
+package clash
 
 import (
 	"fmt"
 	"log"
-	"math/rand"
-	"net/http"
 	"net/url"
 	"sort"
 	"strings"
@@ -12,128 +10,17 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/frezcirno/cctools/internal/fetch"
 )
 
-const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-
+// PROXY_BLACKLIST names proxies that upstreams inject for signalling rather
+// than routing (expiry notices, ad lines, DIRECT/REJECT stubs); they are
+// stripped when an upstream is parsed.
 var PROXY_BLACKLIST = []string{"DIRECT", "REJECT", "GLOBAL", "✉️", "有效期", "群", "感谢", "非线路"}
 
-func randomStr(length int) string {
-	var letters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
-	b := make([]rune, length)
-	for i := range b {
-		b[i] = letters[rand.Intn(len(letters))]
-	}
-	return string(b)
-}
-
-func downloadUpstream(upstream *url.URL, upstream_name string, ttl_sec int, timeout int, use_cache_on_err bool) (*Airport, error) {
-	ttl := time.Duration(ttl_sec) * time.Second
-	cache_key := make_cache_key(upstream)
-	// Upstreams may legitimately use file:// / base64:// (operator-configured,
-	// token-gated), so local schemes are allowed here.
-	content, err := download(upstream, upstream_name, ttl, timeout, use_cache_on_err, true)
-	if err != nil {
-		log.Printf("Failed to download upstream %v: %v", upstream, err)
-		return nil, err
-	}
-
-	airport, err := parseUpstream(content)
-	if err != nil {
-		log.Printf("Failed to parse downloaded upstream %v: %v", upstream, err)
-
-		cache_ok, _ := cache_is_ok(cache_key, ttl)
-		if use_cache_on_err && cache_ok {
-			log.Printf("Retry cached upstream for %v", upstream)
-			content, err := load_cache(cache_key)
-			if err == nil {
-				return parseUpstream(content)
-			}
-		}
-
-		return nil, err
-	}
-
-	save_cache(cache_key, content)
-	return airport, nil
-}
-
-func parseUpstream(content []byte) (*Airport, error) {
-	var obj YamlStrDict
-	if err := yaml.Unmarshal(content, &obj); err != nil {
-		return nil, err
-	}
-
-	proxyRaw, err := asAnyList(obj["proxies"], "proxies")
-	if err != nil {
-		return nil, fmt.Errorf("proxies not found")
-	}
-	proxies, err := NewDictList(proxyRaw)
-	if err != nil {
-		return nil, fmt.Errorf("invalid proxies: %w", err)
-	}
-
-	airport := Airport{Proxies: proxies}
-
-	airport.filterProxy(func(m YamlStrDict) bool {
-		for _, b := range PROXY_BLACKLIST {
-			if _, ok := m["name"]; ok {
-				if strings.Contains(m["name"].(string), b) {
-					return false
-				}
-			}
-		}
-		return true
-	})
-
-	return &airport, nil
-}
-
-func mergeProxies(from, to *Airport) {
-	for _, key := range from.Proxies.keys() {
-		old_key := key
-		// Deterministic suffix (old_2, old_3, ...) so identical inputs always
-		// produce identical names — a random suffix would make output unstable.
-		for i := 2; to.Proxies.get(key) != nil; i++ {
-			key = fmt.Sprintf("%s_%d", old_key, i)
-		}
-		if old_key != key {
-			from.renameProxy(old_key, key)
-		}
-		to.Proxies.set(key, from.Proxies.get(key))
-	}
-}
-
-func stackAirports(airports []*Airport) *Airport {
-	merged := &Airport{Proxies: NewEmptyDictList()}
-
-	for _, airport := range airports {
-		mergeProxies(airport, merged)
-	}
-
-	return merged
-}
-
-// sortedAirportKeys returns the airport names in a stable order so that all
-// passes over the airports map (conflict resolution, proxy collection, group
-// building) produce deterministic, byte-stable output instead of leaking Go's
-// random map iteration order into the generated config.
-func sortedAirportKeys(airports map[string]*Airport) []string {
-	keys := make([]string, 0, len(airports))
-	for k := range airports {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func resolveAirportNameConflicts(airports map[string]*Airport) {
-	merged := &Airport{Proxies: NewEmptyDictList()}
-	for _, name := range sortedAirportKeys(airports) {
-		mergeProxies(airports[name], merged)
-	}
-}
-
+// Config is one render request: the base template, the upstream catalogue, and
+// every option the caller supplied.
 type Config struct {
 	Template  map[string]any
 	Upstreams map[string]AirportSpec
@@ -180,6 +67,7 @@ func validatePort(name string, port int) error {
 	return nil
 }
 
+// Validate rejects option combinations that would produce a broken config.
 func (c *Config) Validate() error {
 	if c.Upstreams == nil {
 		return fmt.Errorf("need upstreams")
@@ -259,12 +147,12 @@ func (c *Config) selectedUpstreams() []AirportSpec {
 		userTags = []string{"default"}
 	}
 	for _, upstream := range c.Upstreams {
-		if !upstream.enabled() {
+		if !upstream.Enabled() {
 			continue
 		}
 		matched := false
 		for _, userTag := range userTags {
-			for _, upstreamTag := range upstream.tags() {
+			for _, upstreamTag := range upstream.AllTags() {
 				if userTag == upstreamTag {
 					selected = append(selected, upstream)
 					matched = true
@@ -288,7 +176,9 @@ func (c *Config) hasOrganizerGroup(key string) bool {
 	return false
 }
 
-func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
+// Generate renders the final Clash config. base is how the generated document
+// should address this server when rewriting rule-provider URLs.
+func (c *Config) Generate(base BaseURL) (YamlStrDict, error) {
 	templateCopy, err := deepCopyTemplate(c.Template)
 	if err != nil {
 		return nil, err
@@ -316,12 +206,12 @@ func (c *Config) generate(r *http.Request) (YamlStrDict, error) {
 		// Fail closed: every selector would otherwise collapse to DIRECT and the
 		// client would silently install a config that routes all traffic
 		// unproxied. Returning an error lets the client keep its last-known-good.
-		return nil, &upstreamUnavailableError{fmt.Errorf("no proxies collected from any configured upstream")}
+		return nil, &UpstreamUnavailableError{fmt.Errorf("no proxies collected from any configured upstream")}
 	}
 	cfg.Template["proxies"] = allProxies.values()
 	cfg.Template["proxy-groups"] = cfg.buildProxyGroups(airports, allProxies, allSelectors)
 
-	if err := cfg.transformRuleProviders(r); err != nil {
+	if err := cfg.transformRuleProviders(base); err != nil {
 		return nil, err
 	}
 
@@ -437,7 +327,7 @@ func (c *Config) applyBaseTemplateOptions() error {
 	log.Printf("Applying base template options: port_proxy=%t trans_proxy=%t external_controller=%s", c.PortProxy, c.TransProxy, c.ExternalControllerType)
 	// Pass-through, not defaulting: a value is written to the template only when
 	// it was actually provided. Defaults live in the front-end form (which now
-	// always sends them) or in defaultTemplate() (template.go) — never
+	// always sends them) or in DefaultTemplate() (template.go) — never
 	// hardcoded here.
 	if c.PortProxy {
 		c.Template["allow-lan"] = c.AllowLan
@@ -744,32 +634,18 @@ func selectorProxies(selector string, groupKeys []string) []string {
 	}
 }
 
-func (c *Config) transformRuleProviders(r *http.Request) error {
+func (c *Config) transformRuleProviders(base BaseURL) error {
 	log.Printf("Transforming rule providers with mode=%s", c.RuleProviderTransform)
 	if c.RuleProviderTransform == RPT_INLINE {
-		return c.inlineRuleProviders(r)
+		return c.inlineRuleProviders(base)
 	}
 	if c.RuleProviderTransform == RPT_PROXY {
-		return c.proxyRuleProviders(r)
+		return c.proxyRuleProviders(base)
 	}
 	return nil
 }
 
-func absoluteURL(r *http.Request, raw string) string {
-	if raw == "" {
-		return raw
-	}
-	parsed, err := url.Parse(raw)
-	if err != nil {
-		return raw
-	}
-	if parsed.IsAbs() {
-		return raw
-	}
-	return fmt.Sprintf("%s://%s%s", Scheme(r), HostAndPort(r), raw)
-}
-
-func (c *Config) inlineRuleProviders(r *http.Request) error {
+func (c *Config) inlineRuleProviders(base BaseURL) error {
 	ruleProviders, err := asStringAnyMapField(c.Template, "rule-providers")
 	if err != nil {
 		return err
@@ -791,8 +667,8 @@ func (c *Config) inlineRuleProviders(r *http.Request) error {
 		if err != nil {
 			return err
 		}
-		ruleProviderURL = absoluteURL(r, ruleProviderURL)
-		url, err := url.Parse(ruleProviderURL)
+		ruleProviderURL = base.Resolve(ruleProviderURL)
+		parsedURL, err := url.Parse(ruleProviderURL)
 		if err != nil {
 			log.Printf("Failed to parse rule provider url: %v", err)
 			return err
@@ -800,7 +676,7 @@ func (c *Config) inlineRuleProviders(r *http.Request) error {
 
 		// Rule-provider URLs come from the template and are fetched at request
 		// time: restrict to http/https (no local-file reads).
-		content, err := download(url, fmt.Sprintf("rule-%s.yaml", ruleSetName), 24*time.Hour, 10, true, false)
+		content, err := fetch.Download(parsedURL, fmt.Sprintf("rule-%s.yaml", ruleSetName), 24*time.Hour, 10, true, false)
 		if err != nil {
 			log.Printf("Failed to retrieve rule provider: %v", err)
 			return err
@@ -899,7 +775,7 @@ func expandRuleSetPatterns(behavior string, patterns []string, ruleAction string
 	return rules, nil
 }
 
-func (c *Config) proxyRuleProviders(r *http.Request) error {
+func (c *Config) proxyRuleProviders(base BaseURL) error {
 	ruleProviders, err := asStringAnyMapField(c.Template, "rule-providers")
 	if err != nil {
 		return err
@@ -910,7 +786,7 @@ func (c *Config) proxyRuleProviders(r *http.Request) error {
 			return err
 		}
 
-		proxyURL := fmt.Sprintf("%s://%s/rule-providers?rule-set=%s", Scheme(r), HostAndPort(r), ruleSetName)
+		proxyURL := fmt.Sprintf("%s/rule-providers?rule-set=%s", base, url.QueryEscape(ruleSetName))
 		ruleProvider["url"] = proxyURL
 		ruleProviders[ruleSetName] = ruleProvider
 	}
@@ -933,36 +809,4 @@ func deepCopyTemplate(src map[string]any) (YamlStrDict, error) {
 		return nil, fmt.Errorf("failed to unmarshal template copy: %w", err)
 	}
 	return dst, nil
-}
-
-func Scheme(r *http.Request) string {
-	// Can't use `r.Request.URL.Scheme`
-	// See: https://groups.google.com/forum/#!topic/golang-nuts/pMUkBlQBDF0
-	if scheme := r.Header.Get("X-Forwarded-Proto"); scheme != "" {
-		return scheme
-	}
-	if scheme := r.Header.Get("X-Forwarded-Protocol"); scheme != "" {
-		return scheme
-	}
-	if ssl := r.Header.Get("X-Forwarded-Ssl"); ssl == "on" {
-		return "https"
-	}
-	if scheme := r.Header.Get("X-Url-Scheme"); scheme != "" {
-		return scheme
-	}
-	if scheme := r.Header.Get("X-Scheme"); scheme != "" {
-		return scheme
-	}
-	return "http"
-}
-
-func HostAndPort(r *http.Request) string {
-	host := r.Header.Get("X-Forwarded-Host")
-	if host == "" {
-		host = r.Host
-	}
-	if host == "" {
-		host = r.Header.Get("Host")
-	}
-	return host
 }

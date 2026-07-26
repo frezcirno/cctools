@@ -1,6 +1,7 @@
-package main
+package server
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,7 +12,7 @@ func TestHandleConfigNoQueryServesHTML(t *testing.T) {
 	req := httptest.NewRequest("GET", "/clash/config.yaml", nil)
 	w := httptest.NewRecorder()
 
-	handleConfig(w, req)
+	(&Server{}).handleConfig(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
@@ -26,7 +27,7 @@ func TestHandleConfigInvalidBoolParam(t *testing.T) {
 	req := httptest.NewRequest("GET", "/clash/config.yaml?port_proxy=invalid", nil)
 	w := httptest.NewRecorder()
 
-	handleConfig(w, req)
+	(&Server{}).handleConfig(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", w.Code)
@@ -37,7 +38,7 @@ func TestHandleConfigInvalidNumberParam(t *testing.T) {
 	req := httptest.NewRequest("GET", "/clash/config.yaml?port=abc", nil)
 	w := httptest.NewRecorder()
 
-	handleConfig(w, req)
+	(&Server{}).handleConfig(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", w.Code)
@@ -45,26 +46,20 @@ func TestHandleConfigInvalidNumberParam(t *testing.T) {
 }
 
 func TestHandleFileOpForbiddenWithWrongToken(t *testing.T) {
-	oldToken := token
-	token = "secret-token"
-	defer func() { token = oldToken }()
-
 	req := httptest.NewRequest("GET", "/upstreams.yaml?token=wrong", nil)
 	w := httptest.NewRecorder()
 
-	handleFileOp(w, req)
+	(&Server{token: "secret-token"}).handleFileOp(w, req)
 
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", w.Code)
 	}
 }
 
-// TestHandleFileOpDeniesWhenTokenUnset guards the empty-TOKEN fail-open bug:
-// with no TOKEN configured, file operations must be denied, not granted.
+// TestHandleFileOpDeniesWhenTokenUnset guards the empty-token fail-open bug:
+// with no token configured, file operations must be denied, not granted.
 func TestHandleFileOpDeniesWhenTokenUnset(t *testing.T) {
-	oldToken := token
-	token = ""
-	defer func() { token = oldToken }()
+	s := &Server{token: ""}
 
 	for _, target := range []string{
 		"/upstreams.yaml",            // no credentials at all
@@ -73,9 +68,9 @@ func TestHandleFileOpDeniesWhenTokenUnset(t *testing.T) {
 	} {
 		req := httptest.NewRequest("GET", target, nil)
 		w := httptest.NewRecorder()
-		handleFileOp(w, req)
+		s.handleFileOp(w, req)
 		if w.Code != http.StatusForbidden {
-			t.Fatalf("GET %s with TOKEN unset: status = %d, want 403", target, w.Code)
+			t.Fatalf("GET %s with token unset: status = %d, want 403", target, w.Code)
 		}
 	}
 }
@@ -83,15 +78,13 @@ func TestHandleFileOpDeniesWhenTokenUnset(t *testing.T) {
 // TestHandleFileOpAcceptsCorrectToken checks each accepted credential channel
 // gets past auth (status is not 403) when the token matches.
 func TestHandleFileOpAcceptsCorrectToken(t *testing.T) {
-	oldToken := token
-	token = "secret-token"
-	defer func() { token = oldToken }()
+	s := &Server{token: "secret-token"}
 
 	mk := func(setup func(*http.Request)) int {
 		req := httptest.NewRequest("GET", "/upstreams.yaml", nil)
 		setup(req)
 		w := httptest.NewRecorder()
-		handleFileOp(w, req)
+		s.handleFileOp(w, req)
 		return w.Code
 	}
 
@@ -111,7 +104,7 @@ func TestHandleRuleProvidersRequiresRuleSet(t *testing.T) {
 	req := httptest.NewRequest("GET", "/rule-providers", nil)
 	w := httptest.NewRecorder()
 
-	handleRuleProviders(w, req)
+	(&Server{}).handleRuleProviders(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", w.Code)
@@ -122,9 +115,60 @@ func TestHandleRuleProvidersRejectsPost(t *testing.T) {
 	req := httptest.NewRequest("POST", "/rule-providers?rule-set=test", nil)
 	w := httptest.NewRecorder()
 
-	handleRuleProviders(w, req)
+	(&Server{}).handleRuleProviders(w, req)
 
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want 405", w.Code)
+	}
+}
+
+func TestConvertRawListToRuleProvider(t *testing.T) {
+	withRules, has := convertRawListToRuleProvider([]byte("DOMAIN,example.com\n# a comment\nIP-CIDR,1.1.1.0/24\n"))
+	if !has {
+		t.Fatal("expected hasRules=true")
+	}
+	if !bytes.Contains(withRules, []byte("payload:")) || !bytes.Contains(withRules, []byte(" - DOMAIN,example.com")) {
+		t.Fatalf("expected payload + rule lines, got:\n%s", withRules)
+	}
+
+	// Comment-only and empty inputs must still produce a valid payload mapping.
+	for _, in := range []string{"# only a comment\n\n", ""} {
+		out, has := convertRawListToRuleProvider([]byte(in))
+		if has {
+			t.Errorf("input %q: expected hasRules=false", in)
+		}
+		if !bytes.Contains(out, []byte("payload: []")) {
+			t.Errorf("input %q: expected 'payload: []', got:\n%s", in, out)
+		}
+		if bytes.Contains(out, []byte("\n - ")) {
+			t.Errorf("input %q: unexpected rule line in degenerate output:\n%s", in, out)
+		}
+	}
+}
+
+func TestDetectPlatformFromUserAgent(t *testing.T) {
+	cases := map[string]string{
+		"clash-verge/v1.5.0 (Windows NT 10.0)": "windows",
+		"mihomo/1.18.0 (Linux x86_64)":         "linux",
+		"Clash/1.0 (Android 14)":               "android",
+		"ClashX/1.95.1 Darwin":                 "darwin",
+		"curl/8.4.0":                           "other",
+		// Windows is checked first: a UA naming both still resolves to windows.
+		"ClashforWindows/0.20.39 Linux": "windows",
+	}
+	for ua, want := range cases {
+		if got := string(detectPlatform(ua)); got != want {
+			t.Errorf("detectPlatform(%q) = %q, want %q", ua, got, want)
+		}
+	}
+}
+
+func TestBaseURLHonorsForwardedHeaders(t *testing.T) {
+	req := httptest.NewRequest("GET", "http://internal:9000/clash/config.yaml", nil)
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("X-Forwarded-Host", "sub.example.com")
+
+	if got := baseURL(req).String(); got != "https://sub.example.com" {
+		t.Fatalf("baseURL() = %q, want https://sub.example.com", got)
 	}
 }

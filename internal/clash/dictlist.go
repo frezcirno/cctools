@@ -1,10 +1,6 @@
-package main
+package clash
 
 import "fmt"
-
-type (
-	YamlStrDict map[string]any
-)
 
 /**
  * DictList is an ordered collection of YamlStrDicts, keyed by name.

@@ -1,4 +1,11 @@
-package main
+// Package vfs is a tiny filesystem abstraction that transparently falls back to
+// an in-memory overlay when the working directory is not writable (e.g. a
+// read-only serverless filesystem).
+//
+// All application code must go through Store/Load/Stat rather than the os
+// package directly, so the same code path works on a read-only host and on a
+// normal server with disk.
+package vfs
 
 import (
 	"log"
@@ -8,7 +15,9 @@ import (
 	"time"
 )
 
-var FS_IS_READONLY = false
+// IsReadOnly reports whether the working directory rejected a probe write at
+// startup. When true, Store writes to the in-memory overlay instead of disk.
+var IsReadOnly = false
 
 func init() {
 	// Test if the filesystem is read-only
@@ -16,7 +25,7 @@ func init() {
 	_, err := os.OpenFile(".ct_test_fs", os.O_RDWR|os.O_CREATE|os.O_EXCL, 0644)
 	if err != nil {
 		log.Println("Filesystem is read-only")
-		FS_IS_READONLY = true
+		IsReadOnly = true
 	}
 	os.Remove(".ct_test_fs")
 }
@@ -32,16 +41,18 @@ func resolvePath(fspath string) string {
 	return absPath
 }
 
-func fsStore(fspath string, data []byte) {
-	if FS_IS_READONLY {
+// Store writes data to fspath, using the in-memory overlay on a read-only FS.
+func Store(fspath string, data []byte) {
+	if IsReadOnly {
 		memfsStore(fspath, data)
 	} else {
 		fileStore(fspath, data)
 	}
 }
 
-func fsLoad(fspath string) ([]byte, error) {
-	if FS_IS_READONLY {
+// Load reads fspath, checking the in-memory overlay first on a read-only FS.
+func Load(fspath string) ([]byte, error) {
+	if IsReadOnly {
 		// try to load from memory first
 		if data, err := memfsLoad(fspath); err == nil {
 			return data, nil
@@ -50,8 +61,9 @@ func fsLoad(fspath string) ([]byte, error) {
 	return fileLoad(fspath)
 }
 
-func fsStat(fspath string) (os.FileInfo, error) {
-	if FS_IS_READONLY {
+// Stat reports metadata for fspath, checking the overlay first on a read-only FS.
+func Stat(fspath string) (os.FileInfo, error) {
+	if IsReadOnly {
 		// try to load from memory first
 		if info, err := memfsStat(fspath); err == nil {
 			return info, nil
@@ -79,7 +91,7 @@ func fileStore(fspath string, data []byte) {
 	}
 }
 
-type File struct {
+type memFile struct {
 	data    []byte
 	modtime time.Time
 }
@@ -116,20 +128,20 @@ func (fi *memFileInfo) Sys() any {
 
 var (
 	overlayMu sync.RWMutex
-	OVERLAYFS = map[string]File{}
+	overlay   = map[string]memFile{}
 )
 
 func memfsStore(fspath string, data []byte) {
 	pathKey := resolvePath(fspath)
 	overlayMu.Lock()
-	OVERLAYFS[pathKey] = File{data, time.Now()}
+	overlay[pathKey] = memFile{data, time.Now()}
 	overlayMu.Unlock()
 }
 
 func memfsLoad(fspath string) ([]byte, error) {
 	pathKey := resolvePath(fspath)
 	overlayMu.RLock()
-	f, ok := OVERLAYFS[pathKey]
+	f, ok := overlay[pathKey]
 	overlayMu.RUnlock()
 	if !ok {
 		return nil, os.ErrNotExist
@@ -140,7 +152,7 @@ func memfsLoad(fspath string) ([]byte, error) {
 func memfsStat(fspath string) (os.FileInfo, error) {
 	pathKey := resolvePath(fspath)
 	overlayMu.RLock()
-	f, ok := OVERLAYFS[pathKey]
+	f, ok := overlay[pathKey]
 	overlayMu.RUnlock()
 	if !ok {
 		return nil, os.ErrNotExist
