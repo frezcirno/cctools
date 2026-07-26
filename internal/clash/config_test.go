@@ -298,7 +298,7 @@ func makeDictList(entries ...YamlStrDict) DictList {
 	return dl
 }
 
-func TestClassifyProxiesUsesClassifierRegistry(t *testing.T) {
+func TestOrganizeProxiesUsesOrganizerRegistry(t *testing.T) {
 	proxies := makeDictList(
 		YamlStrDict{"name": "香港节点", "udp": true},
 		YamlStrDict{"name": "台湾节点", "udp": false},
@@ -307,7 +307,7 @@ func TestClassifyProxiesUsesClassifierRegistry(t *testing.T) {
 		YamlStrDict{"name": "日本节点", "udp": false},
 	)
 
-	classified := ClassifyNodes(proxies, NodeClassifiers)
+	classified := OrganizeNodes(proxies, DefaultNodeOrganizers)
 
 	if !reflect.DeepEqual(classified["cn"], []string{"香港节点", "台湾节点"}) {
 		t.Fatalf("classified cn = %v", classified["cn"])

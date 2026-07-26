@@ -329,6 +329,14 @@
                   <label class="selectable"><input type="checkbox" id="organizer-jp" name="organizer-jp">Japan</label>
                 </div>
                 <div class="checkbox-item">
+                  <label class="selectable"><input type="checkbox" id="organizer-claude"
+                      name="organizer-claude">Claude</label>
+                </div>
+                <div class="checkbox-item">
+                  <label class="selectable"><input type="checkbox" id="organizer-chatgpt"
+                      name="organizer-chatgpt">ChatGPT</label>
+                </div>
+                <div class="checkbox-item">
                   <label class="selectable"><input type="checkbox" id="organizer-udp" name="organizer-udp"
                       checked>UDP</label>
                 </div>
@@ -696,15 +704,11 @@ https://101.101.101.101/dns-query
         data.upstream = upstreamChecks.join(',');
       }
 
-      // merge organizer-* into organizer
-      data.organizer = Object.keys(data).filter(key => key.startsWith('organizer-')).map(key => key.split('-')[1]).join(',');
-      delete data['organizer-cn'];
-      delete data['organizer-tw'];
-      delete data['organizer-oversea'];
-      delete data['organizer-us'];
-      delete data['organizer-sg'];
-      delete data['organizer-jp'];
-      delete data['organizer-udp'];
+      // merge organizer-* into a single CSV `organizer` param. Derived from the
+      // keys actually present, so adding a checkbox needs no change here.
+      const organizerKeys = Object.keys(data).filter(key => key.startsWith('organizer-'));
+      data.organizer = organizerKeys.map(key => key.slice('organizer-'.length)).join(',');
+      organizerKeys.forEach(key => delete data[key]);
 
       // Single source of truth for defaults: the form placeholders. When a
       // section is enabled but its field is left blank, send the placeholder

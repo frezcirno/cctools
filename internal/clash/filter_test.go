@@ -22,6 +22,12 @@ func TestProxyNameMissing(t *testing.T) {
 	if isJP(proxy) {
 		t.Fatal("isJP should return false for proxy without name")
 	}
+	if isClaude(proxy) {
+		t.Fatal("isClaude should return false for proxy without name")
+	}
+	if isChatgpt(proxy) {
+		t.Fatal("isChatgpt should return false for proxy without name")
+	}
 	if isOversea(proxy) {
 		// isOversea is !isCN, and isCN returns false, so isOversea returns true
 		// This is expected behavior for missing name
@@ -35,6 +41,48 @@ func TestProxyNameWrongType(t *testing.T) {
 	}
 	if isUS(proxy) {
 		t.Fatal("isUS should return false for non-string name")
+	}
+}
+
+func TestIsClaude(t *testing.T) {
+	match := []string{
+		"US-Claude-01", "claude专线", "🇺🇸 Anthropic 解锁", "美国克劳德",
+		"JP|Claude/GPT",
+	}
+	for _, name := range match {
+		if !isClaude(YamlStrDict{"name": name}) {
+			t.Errorf("isClaude(%q) = false, want true", name)
+		}
+	}
+
+	// "clauded"/"anthropics" have no word boundary; the geo nodes must not leak
+	// into the claude group.
+	noMatch := []string{"US-01", "香港 IEPL", "claudex", "unclaude", "GPT-4 解锁"}
+	for _, name := range noMatch {
+		if isClaude(YamlStrDict{"name": name}) {
+			t.Errorf("isClaude(%q) = true, want false", name)
+		}
+	}
+}
+
+func TestIsChatgpt(t *testing.T) {
+	match := []string{
+		"美国AI解锁", "US-ChatGPT", "chat gpt 专线", "OpenAI|SG",
+		"🇯🇵 GPT", "Gemini-JP", "人工智能专线", "ChatBot-01",
+	}
+	for _, name := range match {
+		if !isChatgpt(YamlStrDict{"name": name}) {
+			t.Errorf("isChatgpt(%q) = false, want true", name)
+		}
+	}
+
+	// Bare "ai" inside a larger word must not match, or Dubai/Thailand/Shanghai
+	// nodes would all land in the chatgpt group.
+	noMatch := []string{"Dubai-01", "Thailand 泰国", "Shanghai IPLC", "US-Claude-01"}
+	for _, name := range noMatch {
+		if isChatgpt(YamlStrDict{"name": name}) {
+			t.Errorf("isChatgpt(%q) = true, want false", name)
+		}
 	}
 }
 

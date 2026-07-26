@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -166,15 +167,6 @@ func (c *Config) selectedUpstreams() []AirportSpec {
 		}
 	}
 	return selected
-}
-
-func (c *Config) hasOrganizerGroup(key string) bool {
-	for _, group := range c.Organizer {
-		if group == key {
-			return true
-		}
-	}
-	return false
 }
 
 // Generate renders the final Clash config. base is how the generated document
@@ -567,15 +559,30 @@ const (
 	defaultURLTestTolerance = 100
 )
 
+// healthCheckOverrides give an organizer subgroup a probe that actually
+// exercises what the group exists for — a "-claude" group that only pinged
+// generate_204 would tell you nothing the plain group doesn't. Matched by
+// suffix against the group name, first hit wins, so list specific before broad.
+var healthCheckOverrides = []struct {
+	suffix   string
+	url      string
+	interval int
+}{
+	{"-claude", "https://claude.ai", 1800},
+	{"-chatgpt", "https://chatgpt.com", 1800},
+	{"-tw", "https://ani.gamer.com.tw/", 1800},
+}
+
 func makeURLTestGroup(name string, proxies []string) YamlStrDict {
 	var url string = defaultURLTestURL
 	var interval int = defaultURLTestInterval
-	if strings.Contains(strings.ToLower(name), "-us") {
-		url = "https://claude.ai"
-		interval = 1800
-	} else if strings.Contains(strings.ToLower(name), "-tw") {
-		url = "https://ani.gamer.com.tw/"
-		interval = 1800
+	lowered := strings.ToLower(name)
+	for _, override := range healthCheckOverrides {
+		if strings.HasSuffix(lowered, override.suffix) {
+			url = override.url
+			interval = override.interval
+			break
+		}
 	}
 	return YamlStrDict{
 		"name":     name,
@@ -590,15 +597,15 @@ func makeURLTestGroup(name string, proxies []string) YamlStrDict {
 
 func (c *Config) buildOrganizerGroups(prefix string, proxies DictList) []YamlStrDict {
 	groups := []YamlStrDict{}
-	classified := ClassifyNodes(proxies, NodeClassifiers)
+	classified := OrganizeNodes(proxies, DefaultNodeOrganizers)
 
-	for _, classifier := range NodeClassifiers {
-		matched := classified[classifier.name]
-		if !c.hasOrganizerGroup(classifier.name) || len(matched) == 0 {
+	for _, organizer := range DefaultNodeOrganizers {
+		matched := classified[organizer.name]
+		if !slices.Contains(c.Organizer, organizer.name) || len(matched) == 0 {
 			continue
 		}
 		sort.Strings(matched)
-		groups = append(groups, makeURLTestGroup(fmt.Sprintf("%s-%s", prefix, classifier.name), matched))
+		groups = append(groups, makeURLTestGroup(fmt.Sprintf("%s-%s", prefix, organizer.name), matched))
 	}
 
 	return groups
