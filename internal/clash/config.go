@@ -15,6 +15,20 @@ import (
 	"github.com/frezcirno/cctools/internal/ruleset"
 )
 
+const (
+	// ruleProviderTTL is how long a downloaded rule-provider body stays usable
+	// from the cache.
+	ruleProviderTTL = 24 * time.Hour
+	// ruleProviderTimeout bounds a single rule-provider download. The largest
+	// lists in the default template are several MB, so 10s was not enough on an
+	// ordinary link and surfaced as "context deadline exceeded" → HTTP 500.
+	ruleProviderTimeout = 60
+	// maxConcurrentRuleProviders mirrors the upstream fetch cap: enough
+	// parallelism to stay well inside the server's WriteTimeout, not so much
+	// that we hammer the rule-list hosts.
+	maxConcurrentRuleProviders = 8
+)
+
 // PROXY_BLACKLIST names proxies that upstreams inject for signalling rather
 // than routing (expiry notices, ad lines, DIRECT/REJECT stubs); they are
 // stripped when an upstream is parsed.
@@ -569,7 +583,7 @@ var healthCheckOverrides = []struct {
 	interval int
 }{
 	{"-claude", "https://claude.ai", 1800},
-	{"-chatgpt", "https://chatgpt.com", 1800},
+	{"-chatbot", "https://chatgpt.com", 1800},
 	{"-tw", "https://ani.gamer.com.tw/", 1800},
 }
 
@@ -645,13 +659,15 @@ func (c *Config) inlineRuleProviders() error {
 	}
 	delete(c.Template, "rule-providers")
 
-	ruleProviderMap := map[string]YamlStrDict{}
+	// Read every provider's declared behavior/url first: this is pure map
+	// access, and a malformed template should be rejected before any I/O.
+	type providerSpec struct{ behavior, url string }
+	specs := make(map[string]providerSpec, len(ruleProviders))
 	for ruleSetName, ruleProviderRaw := range ruleProviders {
 		ruleProvider, err := asStringAnyMap(ruleProviderRaw, fmt.Sprintf("rule-providers.%s", ruleSetName))
 		if err != nil {
 			return err
 		}
-
 		behavior, err := asString(ruleProvider["behavior"], fmt.Sprintf("rule-providers.%s.behavior", ruleSetName))
 		if err != nil {
 			return err
@@ -660,25 +676,60 @@ func (c *Config) inlineRuleProviders() error {
 		if err != nil {
 			return err
 		}
-		// Rule-provider URLs come from the template and are fetched at request
-		// time: only http/https (no local-file reads), and the relative
-		// "/convert?url=…" form is expanded in-process rather than by calling
-		// our own endpoint over the network.
-		content, err := ruleset.Fetch(ruleProviderURL, fmt.Sprintf("rule-%s.yaml", ruleSetName), 24*time.Hour, 10)
-		if err != nil {
-			log.Printf("Failed to retrieve rule provider %s: %v", ruleSetName, err)
-			return err
+		specs[ruleSetName] = providerSpec{behavior, ruleProviderURL}
+	}
+
+	// Fetch concurrently. The default template has 21 providers and the largest
+	// are multiple MB, so downloading them one at a time routinely outran the
+	// server's WriteTimeout. Results land in a map, so the completion order
+	// can't affect the generated output.
+	type providerResult struct {
+		body []byte
+		err  error
+	}
+	results := make(map[string]providerResult, len(specs))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, maxConcurrentRuleProviders)
+
+	for ruleSetName, spec := range specs {
+		ruleSetName, spec := ruleSetName, spec
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			// Rule-provider URLs come from the template and are fetched at
+			// request time: only http/https (no local-file reads), and the
+			// relative "/convert?url=…" form is expanded in-process rather than
+			// by calling our own endpoint over the network.
+			body, err := ruleset.Fetch(spec.url, fmt.Sprintf("rule-%s.yaml", ruleSetName), ruleProviderTTL, ruleProviderTimeout)
+			mu.Lock()
+			results[ruleSetName] = providerResult{body, err}
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+
+	ruleProviderMap := map[string]YamlStrDict{}
+	for ruleSetName, spec := range specs {
+		result := results[ruleSetName]
+		if result.err != nil {
+			log.Printf("Failed to retrieve rule provider %s: %v", ruleSetName, result.err)
+			return result.err
 		}
 
-		if err := yaml.Unmarshal(content, &ruleProvider); err != nil {
-			log.Printf("Failed to parse rule provider: %v", err)
+		var document YamlStrDict
+		if err := yaml.Unmarshal(result.body, &document); err != nil {
+			log.Printf("Failed to parse rule provider %s: %v", ruleSetName, err)
 			return err
 		}
 
 		ruleProviderMap[ruleSetName] = YamlStrDict{
 			"name":     ruleSetName,
-			"behavior": behavior,
-			"patterns": ruleProvider["payload"],
+			"behavior": spec.behavior,
+			"patterns": document["payload"],
 		}
 	}
 

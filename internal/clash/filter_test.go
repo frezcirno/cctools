@@ -22,10 +22,10 @@ func TestProxyNameMissing(t *testing.T) {
 	if isJP(proxy) {
 		t.Fatal("isJP should return false for proxy without name")
 	}
-	if isClaude(proxy) {
+	if claudeOk(proxy) {
 		t.Fatal("isClaude should return false for proxy without name")
 	}
-	if isChatgpt(proxy) {
+	if chatgptOk(proxy) {
 		t.Fatal("isChatgpt should return false for proxy without name")
 	}
 	if isOversea(proxy) {
@@ -50,7 +50,7 @@ func TestIsClaude(t *testing.T) {
 		"JP|Claude/GPT",
 	}
 	for _, name := range match {
-		if !isClaude(YamlStrDict{"name": name}) {
+		if !claudeOk(YamlStrDict{"name": name}) {
 			t.Errorf("isClaude(%q) = false, want true", name)
 		}
 	}
@@ -59,7 +59,7 @@ func TestIsClaude(t *testing.T) {
 	// into the claude group.
 	noMatch := []string{"US-01", "香港 IEPL", "claudex", "unclaude", "GPT-4 解锁"}
 	for _, name := range noMatch {
-		if isClaude(YamlStrDict{"name": name}) {
+		if claudeOk(YamlStrDict{"name": name}) {
 			t.Errorf("isClaude(%q) = true, want false", name)
 		}
 	}
@@ -71,7 +71,7 @@ func TestIsChatgpt(t *testing.T) {
 		"🇯🇵 GPT", "人工智能专线", "ChatBot-01",
 	}
 	for _, name := range match {
-		if !isChatgpt(YamlStrDict{"name": name}) {
+		if !chatgptOk(YamlStrDict{"name": name}) {
 			t.Errorf("isChatgpt(%q) = false, want true", name)
 		}
 	}
@@ -84,7 +84,7 @@ func TestIsChatgpt(t *testing.T) {
 		"Gemini-JP", "Copilot-US",
 	}
 	for _, name := range noMatch {
-		if isChatgpt(YamlStrDict{"name": name}) {
+		if chatgptOk(YamlStrDict{"name": name}) {
 			t.Errorf("isChatgpt(%q) = true, want false", name)
 		}
 	}
@@ -92,21 +92,21 @@ func TestIsChatgpt(t *testing.T) {
 
 func TestIsUDPMissingField(t *testing.T) {
 	proxy := YamlStrDict{"name": "test"}
-	if isUDP(proxy) {
+	if supportUDP(proxy) {
 		t.Fatal("isUDP should return false when udp field is missing")
 	}
 }
 
 func TestIsUDPWrongType(t *testing.T) {
 	proxy := YamlStrDict{"name": "test", "udp": "yes"}
-	if isUDP(proxy) {
+	if supportUDP(proxy) {
 		t.Fatal("isUDP should return false for non-bool udp field")
 	}
 }
 
 func TestIsUDPTrue(t *testing.T) {
 	proxy := YamlStrDict{"name": "test", "udp": true}
-	if !isUDP(proxy) {
+	if !supportUDP(proxy) {
 		t.Fatal("isUDP should return true")
 	}
 }

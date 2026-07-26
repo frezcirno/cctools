@@ -27,9 +27,9 @@ var DefaultNodeOrganizers = []NodeOrganizer{
 	{name: "sg", matcher: isSG},
 	{name: "jp", matcher: isJP},
 	{name: "oversea", matcher: isOversea},
-	{name: "claude", matcher: isClaude},
-	{name: "chatgpt", matcher: isChatgpt},
-	{name: "udp", matcher: isUDP},
+	{name: "claude", matcher: claudeOk},
+	{name: "chatbot", matcher: chatbotOk},
+	{name: "udp", matcher: supportUDP},
 }
 
 func OrganizeNodes(proxies DictList, classifiers []NodeOrganizer) map[string][]string {
@@ -90,17 +90,16 @@ func isJP(proxy YamlStrDict) bool {
 	return ok && JP.MatchString(name)
 }
 
-func isClaude(proxy YamlStrDict) bool {
+func claudeOk(proxy YamlStrDict) bool {
 	name, ok := proxyName(proxy)
-	return ok && CLAUDE.MatchString(name)
+	return ok && (US.MatchString(name) || CHATGPT.MatchString(name))
 }
 
-func isChatgpt(proxy YamlStrDict) bool {
-	name, ok := proxyName(proxy)
-	return ok && CHATGPT.MatchString(name)
+func chatbotOk(proxy YamlStrDict) bool {
+	return isUS(proxy)
 }
 
-func isUDP(proxy YamlStrDict) bool {
+func supportUDP(proxy YamlStrDict) bool {
 	udp, ok := proxy["udp"].(bool)
 	return ok && udp
 }

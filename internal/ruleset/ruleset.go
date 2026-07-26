@@ -31,13 +31,30 @@ var download = fetch.Download
 // where the *converted* body is cached, so a later upstream failure can fall
 // back to it.
 func Fetch(rawURL string, cacheKey string, ttl time.Duration, timeout int) ([]byte, error) {
+	// A cache entry within its TTL is authoritative. fetch.Download treats the
+	// cache purely as an error fallback, so without this check every request
+	// re-downloaded all 21 providers — tens of MB — which is what pushed config
+	// generation past the server's WriteTimeout.
+	if ok, _ := cache.IsOK(cacheKey, ttl); ok {
+		if cached, err := cache.Load(cacheKey); err == nil {
+			return cached, nil
+		}
+	}
+
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid rule-provider url %q: %w", rawURL, err)
 	}
 
 	if parsed.IsAbs() {
-		return download(parsed, cacheKey, ttl, timeout, true, false)
+		body, err := download(parsed, cacheKey, ttl, timeout, true, false)
+		if err != nil {
+			return nil, err
+		}
+		if err := cache.Save(cacheKey, body); err != nil {
+			return nil, err
+		}
+		return body, nil
 	}
 
 	if parsed.Path != ConvertPath {

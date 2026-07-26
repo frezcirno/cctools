@@ -3,9 +3,12 @@ package ruleset
 import (
 	"bytes"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/frezcirno/cctools/internal/cache"
 )
 
 // stubDownload swaps the download seam for the duration of a test.
@@ -65,6 +68,8 @@ func TestFetchConvertsRelativeURLInProcess(t *testing.T) {
 }
 
 func TestFetchPassesAbsoluteURLThrough(t *testing.T) {
+	t.Setenv("DISABLE_CACHE", "1")
+
 	raw := []byte("payload:\n  - DOMAIN,example.com\n")
 	fetched := stubDownload(t, raw, nil)
 
@@ -82,7 +87,34 @@ func TestFetchPassesAbsoluteURLThrough(t *testing.T) {
 	}
 }
 
+// TestFetchServesFreshCacheWithoutDownloading guards the cost fix: a cache
+// entry inside its TTL must short-circuit the download, or every request
+// re-fetches tens of MB of rule lists.
+func TestFetchServesFreshCacheWithoutDownloading(t *testing.T) {
+	key := "rule-cachehit-test.yaml"
+	body := []byte("payload:\n  - DOMAIN,cached.example\n")
+	if err := cache.Save(key, body); err != nil {
+		t.Fatalf("cache.Save() error = %v", err)
+	}
+	t.Cleanup(func() { os.Remove("./cache/" + key) })
+
+	downloaded := stubDownload(t, []byte("payload: []"), nil)
+
+	got, err := Fetch("https://example.com/rules.yaml", key, time.Hour, 10)
+	if err != nil {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+	if *downloaded != "" {
+		t.Fatalf("downloaded %q, want no download at all on a fresh cache hit", *downloaded)
+	}
+	if !bytes.Equal(got, body) {
+		t.Fatalf("Fetch() = %q, want the cached body %q", got, body)
+	}
+}
+
 func TestFetchRejectsUnsupportedRelativeURL(t *testing.T) {
+	t.Setenv("DISABLE_CACHE", "1")
+
 	_, err := Fetch("/somewhere-else?x=1", "rule-test.yaml", time.Hour, 10)
 	if err == nil || !strings.Contains(err.Error(), "unsupported relative") {
 		t.Fatalf("Fetch() error = %v, want an 'unsupported relative' error", err)
@@ -92,6 +124,8 @@ func TestFetchRejectsUnsupportedRelativeURL(t *testing.T) {
 // TestFetchRejectsBlockedConvertTarget checks the SSRF guard still applies to
 // the target extracted from the query string.
 func TestFetchRejectsBlockedConvertTarget(t *testing.T) {
+	t.Setenv("DISABLE_CACHE", "1")
+
 	for _, target := range []string{
 		"http://169.254.169.254/latest/meta-data", // cloud metadata
 		"http://127.0.0.1/x",                      // loopback
