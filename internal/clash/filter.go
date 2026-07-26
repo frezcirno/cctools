@@ -13,7 +13,7 @@ var JP *regexp.Regexp = regexp.MustCompile(`(?i)(\b(jp|japan|tokyo|osaka)\b|🇯
 // AI service, rather than by geography. Note `\b` is an ASCII word boundary, so
 // these still match inside CJK names like "美国AI解锁".
 var CLAUDE *regexp.Regexp = regexp.MustCompile(`(?i)(\b(claude|anthropic)\b|克劳德)`)
-var CHATGPT *regexp.Regexp = regexp.MustCompile(`(?i)(\b(ai|gpt|chat ?gpt|openai|chat ?bot|gemini|copilot)\b|人工智能)`)
+var CHATGPT *regexp.Regexp = regexp.MustCompile(`(?i)(\b(ai|gpt|chat ?gpt|openai|chat ?bot)\b|人工智能)`)
 
 type NodeOrganizer struct {
 	name    string

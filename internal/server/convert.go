@@ -11,46 +11,9 @@ import (
 	"time"
 
 	"github.com/frezcirno/cctools/internal/cache"
-	"github.com/frezcirno/cctools/internal/fetch"
+	"github.com/frezcirno/cctools/internal/ruleset"
 	"github.com/frezcirno/cctools/internal/safehttp"
 )
-
-// convertRawListToRuleProvider turns a raw newline-delimited rule list into a
-// Clash rule-provider document under a top-level `payload:` key. It always emits
-// a valid `payload:` mapping (an empty list when there are no rules), so a
-// transiently empty or comment-only upstream cannot produce invalid YAML. The
-// returned bool reports whether any actual rule was present (used to avoid
-// caching degenerate output).
-func convertRawListToRuleProvider(rawList []byte) ([]byte, bool) {
-	rules := make([][]byte, 0)
-	lines := bytes.Split(rawList, []byte("\n"))
-
-	hasRule := false
-	for _, l := range lines {
-		l = bytes.TrimSpace(l)
-		if len(l) == 0 || bytes.HasPrefix(l, []byte("#")) {
-			rules = append(rules, l)
-		} else {
-			rules = append(rules, []byte(" - "+string(l)))
-			hasRule = true
-		}
-	}
-
-	if !hasRule {
-		// No rules: emit a valid empty payload, preserving any leading comments.
-		rules = append(rules, []byte("payload: []"))
-		return bytes.Join(rules, []byte("\n")), false
-	}
-
-	for i := range rules {
-		if bytes.HasPrefix(rules[i], []byte(" - ")) {
-			rules = append(rules[:i], append([][]byte{[]byte("payload:")}, rules[i:]...)...)
-			break
-		}
-	}
-
-	return bytes.Join(rules, []byte("\n")), true
-}
 
 // handleRuleProviders serves a template rule-provider by name, used by the
 // "proxy" rule_provider_transform mode.
@@ -93,23 +56,12 @@ func (s *Server) handleRuleProviders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// NOTE: template rule-providers whose url is relative (the "/convert?url=…"
-	// entries) still fail here — Download rejects the empty scheme. Resolving
-	// them against this server would make it fetch itself over HTTP, which
-	// safehttp refuses on the default loopback bind address; routing them
-	// internally instead is open work.
-	parsedURL, err := url.Parse(ruleURL)
+	// Rule-provider URLs are fetched at request time: only http/https (no
+	// local-file reads), and the relative "/convert?url=…" form is expanded
+	// in-process rather than by looping back through our own endpoint.
+	content, err := ruleset.Fetch(ruleURL, fmt.Sprintf("rule-%s.yaml", ruleSetName), 5*365*24*time.Hour, 10)
 	if err != nil {
-		log.Printf("Failed to parse rule-provider url: %v\n", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
-	// Rule-provider URLs are fetched at request time: restrict to http/https
-	// (no local-file reads).
-	content, err := fetch.Download(parsedURL, fmt.Sprintf("rule-%s.yaml", ruleSetName), 5*365*24*time.Hour, 10, true, false)
-	if err != nil {
-		log.Printf("Failed to download rule-provider: %v\n", err)
+		log.Printf("Failed to download rule-provider %s: %v\n", ruleSetName, err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -168,7 +120,7 @@ func (s *Server) makeConvertProxy() http.Handler {
 			return fmt.Errorf("/convert upstream response exceeds %d bytes", safehttp.MaxResponseBytes)
 		}
 
-		converted, hasRules := convertRawListToRuleProvider(buf.Bytes())
+		converted, hasRules := ruleset.ConvertRawList(buf.Bytes())
 
 		// Don't cache degenerate (empty / comment-only) conversions: a transient
 		// empty upstream response would otherwise poison the cache for 24h.

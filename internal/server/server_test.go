@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/frezcirno/cctools/internal/ruleset"
 )
 
 func TestHandleConfigNoQueryServesHTML(t *testing.T) {
@@ -123,7 +125,7 @@ func TestHandleRuleProvidersRejectsPost(t *testing.T) {
 }
 
 func TestConvertRawListToRuleProvider(t *testing.T) {
-	withRules, has := convertRawListToRuleProvider([]byte("DOMAIN,example.com\n# a comment\nIP-CIDR,1.1.1.0/24\n"))
+	withRules, has := ruleset.ConvertRawList([]byte("DOMAIN,example.com\n# a comment\nIP-CIDR,1.1.1.0/24\n"))
 	if !has {
 		t.Fatal("expected hasRules=true")
 	}
@@ -133,7 +135,7 @@ func TestConvertRawListToRuleProvider(t *testing.T) {
 
 	// Comment-only and empty inputs must still produce a valid payload mapping.
 	for _, in := range []string{"# only a comment\n\n", ""} {
-		out, has := convertRawListToRuleProvider([]byte(in))
+		out, has := ruleset.ConvertRawList([]byte(in))
 		if has {
 			t.Errorf("input %q: expected hasRules=false", in)
 		}

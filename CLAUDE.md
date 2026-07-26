@@ -34,6 +34,7 @@ No web framework; `net/http` stdlib only. Packages, in dependency order (each de
 | `internal/safehttp` | SSRF-safe dialer/transport/client, URL validation, `RedactURL`, `MaxResponseBytes`. |
 | `internal/cache` | `./cache/<sha1(url)>` with per-caller TTL. |
 | `internal/fetch` | `Download()` — scheme handling + cache layering over `safehttp.Client`. |
+| `internal/ruleset` | Resolves a template rule-provider `url` to its YAML body; `ConvertRawList` wraps a raw list as `payload:`. |
 | `internal/clash` | The library: `Config`, `Generate`, `DefaultTemplate`, `DictList`, proxy filters. Knows nothing about `*http.Request`. |
 | `internal/server` | HTTP handlers, query-param parsing, embedded `index.html`. |
 | `cmd/cctools` | `main`: env, `http.Server`, signals. Nothing else. |
@@ -74,5 +75,5 @@ No web framework; `net/http` stdlib only. Packages, in dependency order (each de
 - Platform detection (`Windows`/`Linux`/`Darwin`/`Android`/`Other`) is from the request `User-Agent` and currently affects only `tun.auto-redir` on Windows. Windows is matched first, so a UA naming two systems resolves to Windows.
 - `upstreams.yaml` is gitignored (private). `cache/` is gitignored. `template.yaml` is also gitignored — it no longer exists in the repo; the base config lives in `internal/clash/template.go`. A `template.yaml` on disk is only an optional per-deployment override.
 - `keep_upstream_selector`, `custom_rules`, and `tun_auto_route` are accepted by `knownConfigQueryKeys` (so the front-end form doesn't trigger warnings) but are **not implemented** by the backend — wiring them up (e.g. a line-based parser for `custom_rules`, since rule values contain commas) or removing the `index.html` controls is open work.
-- Known gap: in `proxy` transform mode, `/rule-providers` cannot serve the template entries whose `url` is relative (the `/convert?url=…` ones) — `fetch.Download` rejects the empty scheme. Resolving them against this server would make it fetch itself over HTTP, which `safehttp` refuses on the default loopback bind address; routing them internally is the real fix.
+- Template rule-provider URLs come in two forms: absolute (fetched as-is) and the relative `/convert?url=<raw list>` form. **The relative form is resolved in-process by `ruleset.Fetch`, never by calling our own `/convert` over HTTP** — a self-request is refused by `safehttp` whenever the server is bound to loopback or a private address, which is the default. This was a live 500 in both `inline` and `proxy` mode; don't reintroduce a `base.Resolve()` on these URLs. The SSRF guard still applies to the extracted target.
 - Deployment: the supported target is the standalone Go binary (`./cctools`). `vercel.json` and `v1/` are legacy Python (the Flask app) and currently non-functional (`vercel.json` builds a root `index.py` that does not exist); don't assume the Go server is wired to Vercel.

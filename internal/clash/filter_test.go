@@ -68,7 +68,7 @@ func TestIsClaude(t *testing.T) {
 func TestIsChatgpt(t *testing.T) {
 	match := []string{
 		"美国AI解锁", "US-ChatGPT", "chat gpt 专线", "OpenAI|SG",
-		"🇯🇵 GPT", "Gemini-JP", "人工智能专线", "ChatBot-01",
+		"🇯🇵 GPT", "人工智能专线", "ChatBot-01",
 	}
 	for _, name := range match {
 		if !isChatgpt(YamlStrDict{"name": name}) {
@@ -77,8 +77,12 @@ func TestIsChatgpt(t *testing.T) {
 	}
 
 	// Bare "ai" inside a larger word must not match, or Dubai/Thailand/Shanghai
-	// nodes would all land in the chatgpt group.
-	noMatch := []string{"Dubai-01", "Thailand 泰国", "Shanghai IPLC", "US-Claude-01"}
+	// nodes would all land in the chatgpt group. Other vendors (Gemini, Copilot)
+	// are deliberately out of scope now that the group is named chatgpt.
+	noMatch := []string{
+		"Dubai-01", "Thailand 泰国", "Shanghai IPLC", "US-Claude-01",
+		"Gemini-JP", "Copilot-US",
+	}
 	for _, name := range noMatch {
 		if isChatgpt(YamlStrDict{"name": name}) {
 			t.Errorf("isChatgpt(%q) = true, want false", name)

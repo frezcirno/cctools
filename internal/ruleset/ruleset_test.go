@@ -1,0 +1,104 @@
+package ruleset
+
+import (
+	"bytes"
+	"net/url"
+	"strings"
+	"testing"
+	"time"
+)
+
+// stubDownload swaps the download seam for the duration of a test.
+func stubDownload(t *testing.T, body []byte, err error) *string {
+	t.Helper()
+	var got string
+	original := download
+	download = func(u *url.URL, _ string, _ time.Duration, _ int, _, _ bool) ([]byte, error) {
+		got = u.String()
+		return body, err
+	}
+	t.Cleanup(func() { download = original })
+	return &got
+}
+
+func TestConvertRawList(t *testing.T) {
+	withRules, has := ConvertRawList([]byte("DOMAIN,example.com\n# a comment\nIP-CIDR,1.1.1.0/24\n"))
+	if !has {
+		t.Fatal("expected hasRules=true")
+	}
+	if !bytes.Contains(withRules, []byte("payload:")) || !bytes.Contains(withRules, []byte(" - DOMAIN,example.com")) {
+		t.Fatalf("expected payload + rule lines, got:\n%s", withRules)
+	}
+
+	// Comment-only and empty inputs must still produce a valid payload mapping.
+	for _, in := range []string{"# only a comment\n\n", ""} {
+		out, has := ConvertRawList([]byte(in))
+		if has {
+			t.Errorf("input %q: expected hasRules=false", in)
+		}
+		if !bytes.Contains(out, []byte("payload: []")) {
+			t.Errorf("input %q: expected 'payload: []', got:\n%s", in, out)
+		}
+	}
+}
+
+// TestFetchConvertsRelativeURLInProcess is the regression guard for the 500 that
+// inline/proxy mode used to return: a "/convert?url=…" template entry was
+// resolved against this server and fetched over HTTP, which safehttp refuses
+// whenever the server is bound to loopback (the default). The fetch must go
+// straight to the raw list instead.
+func TestFetchConvertsRelativeURLInProcess(t *testing.T) {
+	t.Setenv("DISABLE_CACHE", "1")
+
+	fetched := stubDownload(t, []byte("DOMAIN-SUFFIX,example.com\n# comment\nIP-CIDR,1.1.1.0/24\n"), nil)
+
+	body, err := Fetch(ConvertPath+"?url=http://8.8.8.8/list.txt", "rule-test.yaml", time.Hour, 10)
+	if err != nil {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+	if *fetched != "http://8.8.8.8/list.txt" {
+		t.Fatalf("downloaded %q, want the raw list URL — not a self-request to /convert", *fetched)
+	}
+	if !bytes.Contains(body, []byte("payload:")) || !bytes.Contains(body, []byte(" - DOMAIN-SUFFIX,example.com")) {
+		t.Fatalf("body was not converted to a rule-provider:\n%s", body)
+	}
+}
+
+func TestFetchPassesAbsoluteURLThrough(t *testing.T) {
+	raw := []byte("payload:\n  - DOMAIN,example.com\n")
+	fetched := stubDownload(t, raw, nil)
+
+	body, err := Fetch("https://example.com/rules.yaml", "rule-test.yaml", time.Hour, 10)
+	if err != nil {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+	if *fetched != "https://example.com/rules.yaml" {
+		t.Fatalf("downloaded %q, want the absolute URL unchanged", *fetched)
+	}
+	// An absolute URL already points at a rule-provider: it must not be run
+	// through ConvertRawList, which would wrap the payload a second time.
+	if !bytes.Equal(body, raw) {
+		t.Fatalf("absolute URL body was rewritten:\n%s", body)
+	}
+}
+
+func TestFetchRejectsUnsupportedRelativeURL(t *testing.T) {
+	_, err := Fetch("/somewhere-else?x=1", "rule-test.yaml", time.Hour, 10)
+	if err == nil || !strings.Contains(err.Error(), "unsupported relative") {
+		t.Fatalf("Fetch() error = %v, want an 'unsupported relative' error", err)
+	}
+}
+
+// TestFetchRejectsBlockedConvertTarget checks the SSRF guard still applies to
+// the target extracted from the query string.
+func TestFetchRejectsBlockedConvertTarget(t *testing.T) {
+	for _, target := range []string{
+		"http://169.254.169.254/latest/meta-data", // cloud metadata
+		"http://127.0.0.1/x",                      // loopback
+		"file:///etc/passwd",                      // local file read
+	} {
+		if _, err := Fetch(ConvertPath+"?url="+target, "rule-test.yaml", time.Hour, 10); err == nil {
+			t.Errorf("Fetch(%q) error = nil, want the SSRF guard to reject it", target)
+		}
+	}
+}

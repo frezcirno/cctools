@@ -12,7 +12,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/frezcirno/cctools/internal/fetch"
+	"github.com/frezcirno/cctools/internal/ruleset"
 )
 
 // PROXY_BLACKLIST names proxies that upstreams inject for signalling rather
@@ -630,7 +630,7 @@ func selectorProxies(selector string, groupKeys []string) []string {
 func (c *Config) transformRuleProviders(base BaseURL) error {
 	log.Printf("Transforming rule providers with mode=%s", c.RuleProviderTransform)
 	if c.RuleProviderTransform == RPT_INLINE {
-		return c.inlineRuleProviders(base)
+		return c.inlineRuleProviders()
 	}
 	if c.RuleProviderTransform == RPT_PROXY {
 		return c.proxyRuleProviders(base)
@@ -638,7 +638,7 @@ func (c *Config) transformRuleProviders(base BaseURL) error {
 	return nil
 }
 
-func (c *Config) inlineRuleProviders(base BaseURL) error {
+func (c *Config) inlineRuleProviders() error {
 	ruleProviders, err := asStringAnyMapField(c.Template, "rule-providers")
 	if err != nil {
 		return err
@@ -660,18 +660,13 @@ func (c *Config) inlineRuleProviders(base BaseURL) error {
 		if err != nil {
 			return err
 		}
-		ruleProviderURL = base.Resolve(ruleProviderURL)
-		parsedURL, err := url.Parse(ruleProviderURL)
-		if err != nil {
-			log.Printf("Failed to parse rule provider url: %v", err)
-			return err
-		}
-
 		// Rule-provider URLs come from the template and are fetched at request
-		// time: restrict to http/https (no local-file reads).
-		content, err := fetch.Download(parsedURL, fmt.Sprintf("rule-%s.yaml", ruleSetName), 24*time.Hour, 10, true, false)
+		// time: only http/https (no local-file reads), and the relative
+		// "/convert?url=…" form is expanded in-process rather than by calling
+		// our own endpoint over the network.
+		content, err := ruleset.Fetch(ruleProviderURL, fmt.Sprintf("rule-%s.yaml", ruleSetName), 24*time.Hour, 10)
 		if err != nil {
-			log.Printf("Failed to retrieve rule provider: %v", err)
+			log.Printf("Failed to retrieve rule provider %s: %v", ruleSetName, err)
 			return err
 		}
 

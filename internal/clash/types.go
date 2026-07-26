@@ -9,7 +9,6 @@ package clash
 import (
 	"errors"
 	"fmt"
-	"net/url"
 )
 
 // YamlStrDict is the in-memory shape of every YAML mapping we manipulate.
@@ -86,21 +85,6 @@ type BaseURL struct {
 // String renders the origin, e.g. "https://sub.example.com".
 func (b BaseURL) String() string {
 	return fmt.Sprintf("%s://%s", b.Scheme, b.Host)
-}
-
-// Resolve turns a possibly-relative URL into an absolute one rooted at b.
-func (b BaseURL) Resolve(raw string) string {
-	if raw == "" {
-		return raw
-	}
-	parsed, err := url.Parse(raw)
-	if err != nil {
-		return raw
-	}
-	if parsed.IsAbs() {
-		return raw
-	}
-	return b.String() + raw
 }
 
 // InvalidConfigError signals that the requested options are out of range or
