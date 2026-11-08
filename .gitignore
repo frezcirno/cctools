@@ -1,11 +1,11 @@
 venv/
-cache/
+/cache/
 upstreams.yaml
 *.log
 __pycache__/
 .pytest_cache/
 .vscode/
 .marscode/
-cctools
+/cctools
 nohup.out
 template.yaml
