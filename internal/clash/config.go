@@ -723,7 +723,28 @@ func (c *Config) buildOrganizerGroups(prefix string, proxies DictList) []YamlStr
 	return groups
 }
 
+// preferredGroupSuffix names selects whose default should be the organizer
+// groups built for them rather than PROXY. A select's default is its first
+// member, so CLAUDE lists every "*-claude" group (nodes probed against
+// claude.ai) ahead of PROXY, whose pick only has to reach generate_204.
+var preferredGroupSuffix = map[string]string{
+	"CLAUDE": "-claude",
+}
+
 func selectProxies(_select string, groupKeys []string) []string {
+	if suffix, ok := preferredGroupSuffix[_select]; ok {
+		preferred, rest := []string{}, []string{}
+		for _, key := range groupKeys {
+			if strings.HasSuffix(strings.ToLower(key), suffix) {
+				preferred = append(preferred, key)
+			} else {
+				rest = append(rest, key)
+			}
+		}
+		proxies := append(preferred, "PROXY")
+		proxies = append(proxies, rest...)
+		return append(proxies, "DIRECT")
+	}
 	switch _select {
 	case "PROXY":
 		return append(groupKeys, "DIRECT")

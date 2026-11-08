@@ -673,3 +673,26 @@ func TestMakeURLTestGroupDetectsDeadNodesPromptly(t *testing.T) {
 		}
 	}
 }
+
+func TestSelectProxiesPutsClaudeGroupsFirstForClaude(t *testing.T) {
+	groups := []string{"all", "all-us", "all-claude", "all-chatbot", "paoluz", "paoluz-claude", "zzy-claude"}
+	original := slices.Clone(groups)
+
+	got := selectProxies("CLAUDE", groups)
+	want := []string{"all-claude", "paoluz-claude", "zzy-claude", "PROXY", "all", "all-us", "all-chatbot", "paoluz", "DIRECT"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("selectProxies(CLAUDE) = %v, want %v", got, want)
+	}
+	if !reflect.DeepEqual(groups, original) {
+		t.Fatalf("selectProxies mutated its input: %v", groups)
+	}
+
+	// Without the claude organizer there is nothing to prefer: PROXY stays first.
+	if got := selectProxies("CLAUDE", []string{"all", "paoluz"}); !reflect.DeepEqual(got, []string{"PROXY", "all", "paoluz", "DIRECT"}) {
+		t.Fatalf("selectProxies(CLAUDE) without claude groups = %v", got)
+	}
+	// Other custom chains keep PROXY as their default.
+	if got := selectProxies("CHATBOT", groups); got[0] != "PROXY" {
+		t.Fatalf("selectProxies(CHATBOT)[0] = %v, want PROXY", got[0])
+	}
+}
