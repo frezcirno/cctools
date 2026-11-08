@@ -59,7 +59,7 @@ func (s *Server) handleRuleProviders(w http.ResponseWriter, r *http.Request) {
 	// Rule-provider URLs are fetched at request time: only http/https (no
 	// local-file reads), and the relative "/convert?url=…" form is expanded
 	// in-process rather than by looping back through our own endpoint.
-	content, err := ruleset.Fetch(ruleURL, fmt.Sprintf("rule-%s.yaml", ruleSetName), 5*365*24*time.Hour, 10)
+	content, err := ruleset.Fetch(ruleURL, fmt.Sprintf("rule-%s.yaml", ruleSetName), ruleset.DefaultTTL, ruleset.DefaultTimeout)
 	if err != nil {
 		log.Printf("Failed to download rule-provider %s: %v\n", ruleSetName, err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)

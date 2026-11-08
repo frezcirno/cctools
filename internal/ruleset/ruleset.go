@@ -12,6 +12,8 @@ package ruleset
 import (
 	"bytes"
 	"fmt"
+	"log"
+	"math"
 	"net/url"
 	"time"
 
@@ -22,6 +24,34 @@ import (
 
 // ConvertPath is the endpoint the relative template URLs point at.
 const ConvertPath = "/convert"
+
+const (
+	// DefaultTTL is how long a fetched rule-provider body is served without
+	// re-downloading. Both the /rule-providers endpoint and inline mode use it.
+	DefaultTTL = 24 * time.Hour
+	// DefaultTimeout (seconds) bounds one download. The largest lists in the
+	// default template are several MB, so 10s was not enough on an ordinary link.
+	DefaultTimeout = 60
+)
+
+// anyAge accepts a cache entry however old it is. It is only used for the
+// failure fallback; going through cache.IsOK keeps DISABLE_CACHE and the
+// future-mtime guard in force.
+const anyAge = time.Duration(math.MaxInt64)
+
+// staleFallback serves the last good copy when a refresh fails, regardless of
+// its age. Freshness (the ttl) and fallback must stay separate: when the
+// fallback was bounded by the ttl, the only way to keep it working was an
+// enormous ttl, and then lists were never refreshed at all.
+func staleFallback(cacheKey string, fetchErr error) ([]byte, error) {
+	if ok, _ := cache.IsOK(cacheKey, anyAge); ok {
+		if cached, err := cache.Load(cacheKey); err == nil {
+			log.Printf("Refreshing %s failed, serving the stale cached copy: %v", cacheKey, fetchErr)
+			return cached, nil
+		}
+	}
+	return nil, fetchErr
+}
 
 // download is a seam: tests swap it so they can exercise the conversion path
 // without a reachable, publicly-routable upstream.
@@ -47,9 +77,9 @@ func Fetch(rawURL string, cacheKey string, ttl time.Duration, timeout int) ([]by
 	}
 
 	if parsed.IsAbs() {
-		body, err := download(parsed, cacheKey, ttl, timeout, true, false)
+		body, err := download(parsed, cacheKey, ttl, timeout, false, false)
 		if err != nil {
-			return nil, err
+			return staleFallback(cacheKey, err)
 		}
 		if err := cache.Save(cacheKey, body); err != nil {
 			return nil, err
@@ -76,12 +106,7 @@ func fetchConverted(target string, cacheKey string, ttl time.Duration, timeout i
 	// ConvertRawList. The fallback is done explicitly below instead.
 	raw, err := download(listURL, "", ttl, timeout, false, false)
 	if err != nil {
-		if ok, _ := cache.IsOK(cacheKey, ttl); ok {
-			if cached, cacheErr := cache.Load(cacheKey); cacheErr == nil {
-				return cached, nil
-			}
-		}
-		return nil, err
+		return staleFallback(cacheKey, err)
 	}
 
 	converted, hasRules := ConvertRawList(raw)

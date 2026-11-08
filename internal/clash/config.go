@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -18,11 +17,11 @@ import (
 const (
 	// ruleProviderTTL is how long a downloaded rule-provider body stays usable
 	// from the cache.
-	ruleProviderTTL = 24 * time.Hour
+	ruleProviderTTL = ruleset.DefaultTTL
 	// ruleProviderTimeout bounds a single rule-provider download. The largest
 	// lists in the default template are several MB, so 10s was not enough on an
 	// ordinary link and surfaced as "context deadline exceeded" → HTTP 500.
-	ruleProviderTimeout = 60
+	ruleProviderTimeout = ruleset.DefaultTimeout
 	// maxConcurrentRuleProviders mirrors the upstream fetch cap: enough
 	// parallelism to stay well inside the server's WriteTimeout, not so much
 	// that we hammer the rule-list hosts.

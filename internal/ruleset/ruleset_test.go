@@ -2,6 +2,7 @@ package ruleset
 
 import (
 	"bytes"
+	"errors"
 	"net/url"
 	"os"
 	"strings"
@@ -134,5 +135,82 @@ func TestFetchRejectsBlockedConvertTarget(t *testing.T) {
 		if _, err := Fetch(ConvertPath+"?url="+target, "rule-test.yaml", time.Hour, 10); err == nil {
 			t.Errorf("Fetch(%q) error = nil, want the SSRF guard to reject it", target)
 		}
+	}
+}
+
+// seedStaleCache writes a cache entry and backdates it well past any ttl the
+// tests use, so it is expired but still present on disk.
+func seedStaleCache(t *testing.T, key string, body []byte) {
+	t.Helper()
+	if err := cache.Save(key, body); err != nil {
+		t.Fatalf("cache.Save() error = %v", err)
+	}
+	t.Cleanup(func() { os.Remove("./cache/" + key) })
+	old := time.Now().Add(-30 * 24 * time.Hour)
+	if err := os.Chtimes("./cache/"+key, old, old); err != nil {
+		t.Fatalf("os.Chtimes() error = %v", err)
+	}
+}
+
+// Regression: /rule-providers used a 5-year ttl so the failure fallback would
+// keep working, which meant a list cached once was never refreshed.
+func TestFetchRefreshesExpiredCache(t *testing.T) {
+	key := "rule-expired-refresh-test.yaml"
+	seedStaleCache(t, key, []byte("payload:\n  - DOMAIN,old.example\n"))
+	fresh := []byte("payload:\n  - DOMAIN,new.example\n")
+	downloaded := stubDownload(t, fresh, nil)
+
+	got, err := Fetch("https://example.com/rules.yaml", key, DefaultTTL, DefaultTimeout)
+	if err != nil {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+	if *downloaded == "" {
+		t.Fatal("expired cache was served without trying to refresh it")
+	}
+	if !bytes.Equal(got, fresh) {
+		t.Fatalf("Fetch() = %q, want the fresh body %q", got, fresh)
+	}
+	if saved, _ := cache.Load(key); !bytes.Equal(saved, fresh) {
+		t.Fatalf("cache holds %q after refresh, want %q", saved, fresh)
+	}
+}
+
+func TestFetchFallsBackToStaleCacheWhenRefreshFails(t *testing.T) {
+	for _, tc := range []struct{ name, url string }{
+		{"absolute", "https://example.com/rules.yaml"},
+		{"converted", ConvertPath + "?url=" + url.QueryEscape("https://example.com/list.txt")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			key := "rule-stale-fallback-" + tc.name + "-test.yaml"
+			stale := []byte("payload:\n  - DOMAIN,stale.example\n")
+			seedStaleCache(t, key, stale)
+			stubDownload(t, nil, errors.New("unexpected EOF"))
+
+			got, err := Fetch(tc.url, key, DefaultTTL, DefaultTimeout)
+			if err != nil {
+				t.Fatalf("Fetch() error = %v, want the stale copy", err)
+			}
+			if !bytes.Equal(got, stale) {
+				t.Fatalf("Fetch() = %q, want the stale body %q", got, stale)
+			}
+		})
+	}
+}
+
+func TestFetchFailsWithoutAnyCache(t *testing.T) {
+	stubDownload(t, nil, errors.New("unexpected EOF"))
+	if _, err := Fetch("https://example.com/rules.yaml", "rule-no-cache-test.yaml", DefaultTTL, DefaultTimeout); err == nil {
+		t.Fatal("Fetch() error = nil, want the download error when nothing is cached")
+	}
+}
+
+func TestFetchStaleFallbackHonoursDisableCache(t *testing.T) {
+	key := "rule-stale-disabled-test.yaml"
+	seedStaleCache(t, key, []byte("payload:\n  - DOMAIN,stale.example\n"))
+	stubDownload(t, nil, errors.New("unexpected EOF"))
+	t.Setenv("DISABLE_CACHE", "1")
+
+	if _, err := Fetch("https://example.com/rules.yaml", key, DefaultTTL, DefaultTimeout); err == nil {
+		t.Fatal("Fetch() served a cached copy with DISABLE_CACHE set")
 	}
 }
