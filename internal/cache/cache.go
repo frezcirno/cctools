@@ -36,6 +36,16 @@ func Load(key string) ([]byte, error) {
 	return vfs.Load(path(key))
 }
 
+// ModTime reports when a cache entry was last written, so callers that serve a
+// stale entry can say how stale it is.
+func ModTime(key string) (time.Time, error) {
+	fi, err := vfs.Stat(path(key))
+	if err != nil {
+		return time.Time{}, err
+	}
+	return fi.ModTime(), nil
+}
+
 // Save writes a cache entry, or does nothing when caching is disabled.
 func Save(key string, content []byte) error {
 	if disabled() {

@@ -102,7 +102,11 @@ func Download(u *url.URL,
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			err = fmt.Errorf("unexpected HTTP status for %s: %s", safehttp.RedactURL(u), resp.Status)
+			// Subscription providers explain refusals in the body ("token
+			// expired, reauthorize at the control panel"); without it the log
+			// only ever said "403".
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
+			err = fmt.Errorf("unexpected HTTP status for %s: %s%s", safehttp.RedactURL(u), resp.Status, bodySnippet(body))
 			if cacheOK && useCacheOnErr {
 				return cache.Load(cacheKey)
 			}
@@ -125,4 +129,27 @@ func Download(u *url.URL,
 	}
 
 	return content, nil
+}
+
+// maxErrorBodyBytes is how much of an error response is read for the log.
+const maxErrorBodyBytes = 512
+
+// bodySnippet renders the start of an error body as one printable line, or ""
+// when there is nothing worth showing.
+func bodySnippet(body []byte) string {
+	text := strings.Join(strings.Fields(strings.ToValidUTF8(string(body), "")), " ")
+	text = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, text)
+	if text == "" {
+		return ""
+	}
+	const max = 200
+	if runes := []rune(text); len(runes) > max {
+		text = string(runes[:max]) + "…"
+	}
+	return fmt.Sprintf(" (body: %q)", text)
 }
