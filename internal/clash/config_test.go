@@ -243,6 +243,7 @@ func TestExpandRuleSetPatterns(t *testing.T) {
 		behavior  string
 		patterns  []string
 		action    string
+		noResolve bool
 		want      []string
 		wantError bool
 	}{
@@ -264,6 +265,34 @@ func TestExpandRuleSetPatterns(t *testing.T) {
 			want:     []string{"DOMAIN,example.com,CHATBOT"},
 		},
 		{
+			name:      "ipcidr behavior carries the rule-set's no-resolve",
+			behavior:  "ipcidr",
+			patterns:  []string{"1.2.3.0/24"},
+			action:    "REJECT",
+			noResolve: true,
+			want:      []string{"IP-CIDR,1.2.3.0/24,REJECT,no-resolve"},
+		},
+		{
+			name:     "ipcidr behavior without no-resolve stays resolving",
+			behavior: "ipcidr",
+			patterns: []string{"1.2.3.0/24"},
+			action:   "CNSITE",
+			want:     []string{"IP-CIDR,1.2.3.0/24,CNSITE"},
+		},
+		{
+			name:      "classical no-resolve touches IP rules only, never twice",
+			behavior:  "classical",
+			patterns:  []string{"DOMAIN-SUFFIX,example.com", "IP-CIDR,1.1.1.0/24", "IP-CIDR6,2001:db8::/32,no-resolve", "GEOIP,CN"},
+			action:    "REJECT",
+			noResolve: true,
+			want: []string{
+				"DOMAIN-SUFFIX,example.com,REJECT",
+				"IP-CIDR,1.1.1.0/24,REJECT,no-resolve",
+				"IP-CIDR6,2001:db8::/32,REJECT,no-resolve",
+				"GEOIP,CN,REJECT,no-resolve",
+			},
+		},
+		{
 			name:      "unknown behavior fails",
 			behavior:  "wat",
 			patterns:  []string{"example.com"},
@@ -274,7 +303,7 @@ func TestExpandRuleSetPatterns(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := expandRuleSetPatterns(tc.behavior, tc.patterns, tc.action)
+			got, err := expandRuleSetPatterns(tc.behavior, tc.patterns, tc.action, tc.noResolve)
 			if tc.wantError {
 				if err == nil {
 					t.Fatalf("expandRuleSetPatterns() error = nil, want error")
@@ -537,5 +566,110 @@ func TestMakeURLTestGroupEmitsExpectedStatusOnlyWhenOverridden(t *testing.T) {
 	}
 	if !strings.Contains(claude["url"].(string), "claude.ai") {
 		t.Errorf("claude group should probe claude.ai, got %v", claude["url"])
+	}
+}
+
+func TestRouteFallbackThroughProxy(t *testing.T) {
+	got := routeFallbackThroughProxy([]string{
+		"https://1.0.0.1/dns-query",
+		"https://dns.example/dns-query#DIRECT",
+		"tls://8.8.8.8#PROXY&h3=true",
+		"",
+	})
+	want := []string{
+		"https://1.0.0.1/dns-query#PROXY",
+		"https://dns.example/dns-query#DIRECT",
+		"tls://8.8.8.8#PROXY&h3=true",
+		"",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("routeFallbackThroughProxy() = %v, want %v", got, want)
+	}
+}
+
+func TestApplyDNSOptionsRoutesFallbackThroughProxy(t *testing.T) {
+	cfg := Config{
+		Template:   DefaultTemplate(),
+		Dns:        true,
+		Nameserver: []string{"223.5.5.5"},
+		Fallback:   []string{"https://1.0.0.1/dns-query"},
+	}
+	if err := cfg.applyDNSOptions(); err != nil {
+		t.Fatalf("applyDNSOptions() error = %v", err)
+	}
+	dns, err := asStringAnyMapField(cfg.Template, "dns")
+	if err != nil {
+		t.Fatalf("dns block: %v", err)
+	}
+	if got, want := dns["fallback"], []string{"https://1.0.0.1/dns-query#PROXY"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("dns.fallback = %v, want %v", got, want)
+	}
+	if got, want := dns["nameserver"], []string{"223.5.5.5"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("dns.nameserver = %v, want %v (only fallback is proxied)", got, want)
+	}
+}
+
+// Every domain that reaches an IP rule without no-resolve is resolved locally
+// first. The proxy-only keywords for the dns.fallback-filter domains must
+// therefore match before the first such rule, or each new connection to them
+// pays a fallback DNS lookup (a 5s stall when the fallback is unreachable).
+func TestDefaultTemplateMatchesFallbackDomainsBeforeResolvingIPRules(t *testing.T) {
+	tmpl := DefaultTemplate()
+	rules, ok := tmpl["rules"].([]any)
+	if !ok {
+		t.Fatal("default template has no rules")
+	}
+	providers, err := asStringAnyMapField(tmpl, "rule-providers")
+	if err != nil {
+		t.Fatalf("rule-providers: %v", err)
+	}
+	firstResolving := -1
+	for i, raw := range rules {
+		rule, _ := raw.(string)
+		parts := strings.Split(rule, ",")
+		if slices.Contains(parts, "no-resolve") {
+			continue
+		}
+		switch {
+		case parts[0] == "GEOIP", strings.HasPrefix(parts[0], "IP-"):
+		case parts[0] == "RULE-SET" && len(parts) > 1:
+			provider, _ := providers[parts[1]].(map[string]any)
+			if provider["behavior"] != "ipcidr" {
+				continue
+			}
+		default:
+			continue
+		}
+		firstResolving = i
+		break
+	}
+	if firstResolving < 0 {
+		t.Fatal("no resolving IP rule found; the test no longer guards anything")
+	}
+	for _, want := range []string{"DOMAIN-KEYWORD,google,PROXY", "DOMAIN-KEYWORD,youtube,PROXY", "DOMAIN-KEYWORD,facebook,PROXY"} {
+		idx := slices.Index(rules, any(want))
+		if idx < 0 {
+			t.Errorf("rule %q missing from default template", want)
+			continue
+		}
+		if idx > firstResolving {
+			t.Errorf("rule %q at %d comes after resolving IP rule %v at %d", want, idx, rules[firstResolving], firstResolving)
+		}
+	}
+}
+
+func TestMakeURLTestGroupDetectsDeadNodesPromptly(t *testing.T) {
+	for _, name := range []string{"paoluz-us", "paoluz-claude"} {
+		g := makeURLTestGroup(name, []string{"n1"})
+		interval, ok := g["interval"].(int)
+		if !ok || interval <= 0 || interval > 600 {
+			t.Errorf("%s interval = %v, want 1..600s so a silently dead node is replaced within minutes", name, g["interval"])
+		}
+		if g["lazy"] != true {
+			t.Errorf("%s lazy = %v, want true (the short interval is only affordable for groups in use)", name, g["lazy"])
+		}
+		if g["max-failed-times"] != urlTestMaxFailedTimes {
+			t.Errorf("%s max-failed-times = %v, want %d", name, g["max-failed-times"], urlTestMaxFailedTimes)
+		}
 	}
 }

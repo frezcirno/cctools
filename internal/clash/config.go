@@ -420,13 +420,36 @@ func (c *Config) applyDNSOptions() error {
 		dns["nameserver"] = c.Nameserver
 	}
 	if len(c.Fallback) > 0 {
-		dns["fallback"] = c.Fallback
+		dns["fallback"] = routeFallbackThroughProxy(c.Fallback)
 	}
 	if len(c.NameserverPolicy) > 0 {
 		dns["nameserver-policy"] = c.NameserverPolicy
 	}
 	c.Template["dns"] = dns
 	return nil
+}
+
+// fallbackDialTarget is the outbound fallback resolvers are dialed through when
+// the caller didn't pick one. PROXY is the one select every generated config has.
+const fallbackDialTarget = "PROXY"
+
+// routeFallbackThroughProxy appends "#PROXY" to every fallback server that does
+// not already name an outbound. dns.fallback only answers the
+// dns.fallback-filter domains (google, youtube, facebook, …), which are by
+// definition the ones a direct lookup can't be trusted for. The default
+// fallbacks are foreign DoH endpoints, and dialed directly they time out often
+// enough that every new connection to those domains waited the full 5s DNS
+// timeout. A server that already carries a "#…" suffix (an explicit "#DIRECT",
+// a group, or "#PROXY&h3=true") is left untouched.
+func routeFallbackThroughProxy(servers []string) []string {
+	routed := make([]string, 0, len(servers))
+	for _, server := range servers {
+		if server != "" && !strings.Contains(server, "#") {
+			server += "#" + fallbackDialTarget
+		}
+		routed = append(routed, server)
+	}
+	return routed
 }
 
 func (c *Config) applyTunOptions() error {
@@ -606,12 +629,25 @@ func (c *Config) buildProxyGroups(airports map[string]*Airport, allProxies DictL
 
 const (
 	defaultURLTestURL = "http://www.gstatic.com/generate_204"
-	// defaultURLTestInterval is deliberately slack. Every proxy in every group
-	// is probed once per interval, so with a few hundred group memberships a
-	// 300s interval meant ~100k probes/day — by far the largest source of
-	// health-check traffic, dwarfing the per-group overrides below.
-	defaultURLTestInterval  = 600
+	// defaultURLTestInterval bounds how long a silently dead node stays
+	// selected. A shadowsocks node behind a relay still accepts the TCP dial
+	// when the relay's far side is down, so mihomo sees no dial error, the
+	// max-failed-times trigger never fires, and traffic just hangs until the
+	// next scheduled probe. At 600s that was a ten-minute outage every time an
+	// entry point went bad.
+	//
+	// The probe volume stays bounded because groups are lazy (see
+	// urlTestLazy): only groups the selects actually route through are
+	// probed, not every group membership in the file.
+	defaultURLTestInterval  = 300
 	defaultURLTestTolerance = 100
+	// urlTestMaxFailedTimes is how many dial failures on the selected node
+	// trigger an immediate re-probe. mihomo's default is 5; 3 cuts the
+	// window in which a node that does fail loudly keeps eating connections.
+	urlTestMaxFailedTimes = 3
+	// urlTestLazy is mihomo's default too, emitted explicitly because the
+	// interval above is only affordable with it: an unused group is not probed.
+	urlTestLazy = true
 )
 
 // healthCheckOverrides point an organizer subgroup at the service it exists to
@@ -625,19 +661,19 @@ const (
 // expected status mihomo counts that as alive and the probe degrades into an
 // expensive generate_204; requiring 200 turns it into a real unlock test.
 //
-// Volume stays small because these groups are small: the claude group is a
-// handful of nodes at a 1800s interval, i.e. a couple of hundred requests a day
-// spread across the exit IPs. The traffic worth worrying about is the default
-// probe, which every proxy in every group runs at defaultURLTestInterval.
+// Volume stays small because these groups are small and lazy: the claude group
+// is a handful of nodes at a 600s interval, probed only while CLAUDE routes
+// through it. 600s rather than the old 1800s because CLAUDE/CHATBOT are the
+// chains where a dead pick was most visible, for half an hour at a time.
 var healthCheckOverrides = []struct {
 	suffix         string
 	url            string
 	interval       int
 	expectedStatus string
 }{
-	{"-claude", "https://claude.ai", 1800, "200"},
-	{"-chatbot", "https://chatgpt.com", 1800, "200"},
-	{"-tw", "https://ani.gamer.com.tw", 1800, "200"},
+	{"-claude", "https://claude.ai", 600, "200"},
+	{"-chatbot", "https://chatgpt.com", 600, "200"},
+	{"-tw", "https://ani.gamer.com.tw", 600, "200"},
 }
 
 func makeURLTestGroup(name string, proxies []string) YamlStrDict {
@@ -660,7 +696,9 @@ func makeURLTestGroup(name string, proxies []string) YamlStrDict {
 		"url":      url,
 		"interval": interval,
 		// 新节点延迟必须比当前节点低 tolerance 以上才会切换,防止在两个延迟相近的节点间反复横跳
-		"tolerance": defaultURLTestTolerance,
+		"tolerance":        defaultURLTestTolerance,
+		"lazy":             urlTestLazy,
+		"max-failed-times": urlTestMaxFailedTimes,
 	}
 	// Only emitted for overridden groups: the default generate_204 probe returns
 	// 204, so pinning a status there would mark every node dead.
@@ -841,7 +879,11 @@ func (c *Config) inlineRuleProviders() error {
 			return err
 		}
 
-		expandedRules, err := expandRuleSetPatterns(behavior, patterns, rule_action)
+		// "RULE-SET,<name>,<action>,no-resolve" has to keep no-resolve on every
+		// IP rule it expands to, or inlining silently brings back the DNS lookup
+		// the option exists to avoid.
+		noResolve := slices.Contains(rule_segs[3:], "no-resolve")
+		expandedRules, err := expandRuleSetPatterns(behavior, patterns, rule_action, noResolve)
 		if err != nil {
 			return err
 		}
@@ -851,14 +893,20 @@ func (c *Config) inlineRuleProviders() error {
 	return nil
 }
 
-func expandRuleSetPatterns(behavior string, patterns []string, ruleAction string) ([]string, error) {
+// expandRuleSetPatterns turns one provider's payload into literal rules routed
+// to ruleAction. noResolve marks the RULE-SET as no-resolve; it is applied to
+// the IP-matching rules only, since a domain rule never resolves anything.
+func expandRuleSetPatterns(behavior string, patterns []string, ruleAction string, noResolve bool) ([]string, error) {
 	rules := make([]string, 0, len(patterns))
 	for _, pattern := range patterns {
 		newRule := ""
 		switch {
 		case strings.HasPrefix(pattern, "DOMAIN"), strings.HasPrefix(pattern, "IP-CIDR"), behavior == "classical":
+			resolvesIP := strings.HasPrefix(pattern, "IP-") || strings.HasPrefix(pattern, "GEOIP")
 			if strings.Contains(pattern, ",no-resolve") {
 				pattern = strings.Replace(pattern, ",no-resolve", "", 1)
+				newRule = fmt.Sprintf("%s,%s,no-resolve", pattern, ruleAction)
+			} else if noResolve && resolvesIP {
 				newRule = fmt.Sprintf("%s,%s,no-resolve", pattern, ruleAction)
 			} else {
 				newRule = fmt.Sprintf("%s,%s", pattern, ruleAction)
@@ -867,6 +915,9 @@ func expandRuleSetPatterns(behavior string, patterns []string, ruleAction string
 			newRule = fmt.Sprintf("DOMAIN,%s,%s", pattern, ruleAction)
 		case behavior == "ipcidr":
 			newRule = fmt.Sprintf("IP-CIDR,%s,%s", pattern, ruleAction)
+			if noResolve {
+				newRule += ",no-resolve"
+			}
 		default:
 			return nil, fmt.Errorf("unknown rule provider behavior: %s", behavior)
 		}

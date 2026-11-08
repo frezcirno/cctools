@@ -337,7 +337,11 @@ func DefaultTemplate() map[string]any {
 			"DOMAIN-SUFFIX,googletagservices.com,CNSITE",
 			"RULE-SET,reject,REJECT",
 			"RULE-SET,ad_domain,REJECT",
-			"RULE-SET,ad_ipcidr,REJECT",
+			// no-resolve: this list only matters for connections that already target
+			// an IP. Without it every domain reaching this rule is resolved locally
+			// first, and for the dns.fallback-filter domains (google, youtube, …)
+			// that lookup can stall each new connection for the full DNS timeout.
+			"RULE-SET,ad_ipcidr,REJECT,no-resolve",
 			"RULE-SET,applications,CNSITE",
 			"RULE-SET,apple,CNSITE",
 			"DOMAIN-SUFFIX,msftconnecttest.com,PROXY",
@@ -345,6 +349,17 @@ func DefaultTemplate() map[string]any {
 			"DOMAIN,dl.google.com,PROXY",
 			"DOMAIN,dl.l.google.com,PROXY",
 			"RULE-SET,direct,CNSITE",
+			// Proxy-only keywords sit above the first IP rules (lancidr/cncidr/GEOIP)
+			// so they match on the domain alone. Below them, mihomo has to resolve
+			// the domain to evaluate the IP rules, and these are exactly the
+			// dns.fallback-filter domains, whose lookups go to the fallback servers.
+			"DOMAIN-SUFFIX,googleapis.cn,PROXY",
+			"DOMAIN-KEYWORD,google,PROXY",
+			"DOMAIN-KEYWORD,gmail,PROXY",
+			"DOMAIN-KEYWORD,youtube,PROXY",
+			"DOMAIN-KEYWORD,facebook,PROXY",
+			"DOMAIN-SUFFIX,fb.me,PROXY",
+			"DOMAIN-SUFFIX,fbcdn.net,PROXY",
 			"RULE-SET,lancidr,CNSITE",
 			"RULE-SET,cncidr,CNSITE",
 			"DOMAIN-KEYWORD,1drv,CNSITE",
@@ -428,17 +443,10 @@ func DefaultTemplate() map[string]any {
 			"GEOIP,CN,CNSITE",
 			"DOMAIN,clash.razord.top,CNSITE",
 			"DOMAIN,yacd.haishan.me,CNSITE",
-			"DOMAIN-SUFFIX,googleapis.cn,PROXY",
 			"DOMAIN-SUFFIX,digicert.com,PROXY",
 			"DOMAIN-SUFFIX,entrust.net,PROXY",
 			"DOMAIN,ocsp.verisign.net,PROXY",
 			"DOMAIN-KEYWORD,amazon,PROXY",
-			"DOMAIN-KEYWORD,google,PROXY",
-			"DOMAIN-KEYWORD,gmail,PROXY",
-			"DOMAIN-KEYWORD,youtube,PROXY",
-			"DOMAIN-KEYWORD,facebook,PROXY",
-			"DOMAIN-SUFFIX,fb.me,PROXY",
-			"DOMAIN-SUFFIX,fbcdn.net,PROXY",
 			"DOMAIN-KEYWORD,twitter,PROXY",
 			"DOMAIN-KEYWORD,instagram,PROXY",
 			"DOMAIN-KEYWORD,dropbox,PROXY",
