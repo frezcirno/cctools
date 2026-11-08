@@ -35,6 +35,30 @@ const minimalUpstreamYAML = `proxies:
 proxy-groups: []
 `
 
+func TestDefaultTemplateRoutesRaftAPIDirectFirst(t *testing.T) {
+	rules, ok := DefaultTemplate()["rules"].([]any)
+	if !ok || len(rules) == 0 {
+		t.Fatal("default template has no rules")
+	}
+	if got, want := rules[0], "DOMAIN,api.raft.build,DIRECT"; got != want {
+		t.Fatalf("first default rule = %v, want %q", got, want)
+	}
+}
+
+func TestDefaultTemplateAllowsClashMiBuiltinDashboard(t *testing.T) {
+	cors, ok := DefaultTemplate()["external-controller-cors"].(map[string]any)
+	if !ok {
+		t.Fatal("default template has no external-controller CORS configuration")
+	}
+	origins, ok := cors["allow-origins"].([]any)
+	if !ok {
+		t.Fatal("external-controller CORS has no allow-origins list")
+	}
+	if !slices.Contains(origins, any("http://127.0.0.1:7066")) {
+		t.Fatalf("allow-origins = %v, want Clash Mi built-in dashboard origin", origins)
+	}
+}
+
 func TestCollectSelectsIncludesCustomChainsInOrder(t *testing.T) {
 	cfg := Config{
 		Template: map[string]any{

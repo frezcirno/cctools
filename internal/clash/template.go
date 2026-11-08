@@ -17,6 +17,7 @@ func DefaultTemplate() map[string]any {
 				"https://yacd.haishan.me",
 				"https://metacubexd.pages.dev",
 				"https://metacubex.github.io",
+				"http://127.0.0.1:7066",
 			},
 			"allow-private-network": true,
 		},
@@ -251,6 +252,7 @@ func DefaultTemplate() map[string]any {
 			},
 		},
 		"rules": []any{
+			"DOMAIN,api.raft.build,DIRECT",
 			"DST-PORT,22,CNSITE",
 			"RULE-SET,zju_internal,CNSITE",
 			"RULE-SET,scholar,PROXY",
