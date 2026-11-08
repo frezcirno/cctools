@@ -25,6 +25,20 @@ func TestHandleConfigNoQueryServesHTML(t *testing.T) {
 	}
 }
 
+func TestConfigPageUsesValidDOMQueryMethods(t *testing.T) {
+	req := httptest.NewRequest("GET", "/clash/config.yaml", nil)
+	w := httptest.NewRecorder()
+
+	(&Server{}).handleConfig(w, req)
+
+	body := w.Body.String()
+	for _, invalid := range []string{"document.querySelect(", "document.querySelectAll("} {
+		if strings.Contains(body, invalid) {
+			t.Errorf("configuration page contains invalid DOM method %q", invalid)
+		}
+	}
+}
+
 func TestHandleConfigInvalidBoolParam(t *testing.T) {
 	req := httptest.NewRequest("GET", "/clash/config.yaml?port_proxy=invalid", nil)
 	w := httptest.NewRecorder()

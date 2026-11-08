@@ -676,7 +676,7 @@ https://101.101.101.101/dns-query
     }
 
     // Initialize visibility based on checkbox state
-    document.querySelectAll('.toggle-checkbox').forEach(checkbox => {
+    document.querySelectorAll('.toggle-checkbox').forEach(checkbox => {
       toggleFieldset(checkbox.id);
     });
 
@@ -699,7 +699,7 @@ https://101.101.101.101/dns-query
       // merge upstream checkboxes into a single CSV `upstream` param. The
       // checkboxes carry no `name`, so they are gathered here rather than from
       // FormData. When none are checked the param is omitted → backend default.
-      const upstreamChecks = Array.from(document.querySelectAll('.upstream-check:checked')).map(c => c.value);
+      const upstreamChecks = Array.from(document.querySelectorAll('.upstream-check:checked')).map(c => c.value);
       if (upstreamChecks.length) {
         data.upstream = upstreamChecks.join(',');
       }
@@ -782,13 +782,13 @@ https://101.101.101.101/dns-query
     }
 
     function resetForm() {
-      const form = document.querySelect('form');
+      const form = document.querySelector('form');
       form.reset();
       // Reset the result textarea
       const result = document.getElementById('result');
       result.value = '';
       // Re-initialize fieldset visibility
-      document.querySelectAll('.toggle-checkbox').forEach(checkbox => {
+      document.querySelectorAll('.toggle-checkbox').forEach(checkbox => {
         toggleFieldset(checkbox.id);
       });
       // Re-generate random secret
@@ -829,13 +829,13 @@ https://101.101.101.101/dns-query
         }
       }
       // Highlight the active preset button.
-      document.querySelectAll('.preset-btn').forEach(btn => {
+      document.querySelectorAll('.preset-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.preset === name);
       });
       // If a URL was already generated, refresh it with the new values.
       const result = document.getElementById('result');
       if (result && result.value) {
-        document.querySelect('form').requestSubmit();
+        document.querySelector('form').requestSubmit();
       }
     }
 
@@ -886,7 +886,7 @@ https://101.101.101.101/dns-query
     // On load, highlight the preset matching the detected OS (darwin → macOS).
     {
       const detected = platform === 'darwin' ? 'macos' : platform;
-      const btn = document.querySelect(`.preset-btn[data-preset="${detected}"]`);
+      const btn = document.querySelector(`.preset-btn[data-preset="${detected}"]`);
       if (btn) {
         btn.classList.add('active');
       }
@@ -910,7 +910,7 @@ https://101.101.101.101/dns-query
       btn.disabled = (field.value === trimmedPlaceholder);
     }
 
-    document.querySelectAll('.form-item input[placeholder], .form-item textarea[placeholder]').forEach(field => {
+    document.querySelectorAll('.form-item input[placeholder], .form-item textarea[placeholder]').forEach(field => {
       if (!field.id) {
         return;
       }
